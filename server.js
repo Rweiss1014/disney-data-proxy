@@ -138,7 +138,39 @@ app.get('/api/disney/entertainment/:park?', async (req, res) => {
 app.get('/api/disney/parade-times/:park?', async (req, res) => {
   const park = req.params.park || 'magic-kingdom';
   const cacheKey = `parades_${park}`;
+  // 🎢 Wait Times Endpoint - ADD THIS AFTER THE PARADE ENDPOINT (around line 140)
+app.get('/api/disney/wait-times/:park?', async (req, res) => {
+  const park = req.params.park || 'magic-kingdom';
+  const cacheKey = `wait_times_${park}`;
   
+  try {
+    // Check cache first
+    const cached = caches.waitTimes.get(cacheKey);
+    if (cached) {
+      console.log(`💾 Cache hit: wait times for ${park}`);
+      return res.json({ ...cached, fromCache: true });
+    }
+    
+    console.log(`🎢 Fetching fresh wait times for ${park}`);
+    
+    const waitTimesData = await fetchWaitTimes(park);
+    
+    if (waitTimesData) {
+      caches.waitTimes.set(cacheKey, waitTimesData);
+      res.json({ ...waitTimesData, fromCache: false });
+    } else {
+      const fallback = getFallbackWaitTimes(park);
+      res.json({ ...fallback, source: 'fallback' });
+    }
+    
+  } catch (error) {
+    console.error(`❌ Wait times error for ${park}:`, error.message);
+    res.status(500).json({
+      error: 'Failed to fetch wait times',
+      fallback: getFallbackWaitTimes(park)
+    });
+  }
+});
   try {
     const cached = caches.entertainment.get(cacheKey);
     if (cached) {
@@ -276,7 +308,42 @@ async function fetchParadeData(park) {
   
   return null;
 }
-
+// Add this function after fetchParadeData function
+async function fetchWaitTimes(park) {
+  const sources = [
+    `https://queue-times.com/parks/${getParkId(park)}/queue_times.json`,
+    `https://touringplans.com/${park}/wait-times.json`
+  ];
+  
+  for (const source of sources) {
+    try {
+      console.log(`📡 Trying wait times source: ${source}`);
+      
+      const response = await axios.get(source, {
+        headers: {
+          'User-Agent': 'PixiePal Disney Companion App/1.0 (+https://pixiepal.app)',
+          'Accept': 'application/json'
+        },
+        timeout: 10000
+      });
+      
+      if (response.data) {
+        console.log(`✅ Got wait times from: ${getSourceName(source)}`);
+        return {
+          park,
+          attractions: parseWaitTimesData(response.data, park),
+          source: getSourceName(source),
+          lastUpdated: new Date().toISOString()
+        };
+      }
+    } catch (error) {
+      console.log(`❌ Failed source: ${source} - ${error.message}`);
+      continue;
+    }
+  }
+  
+  return null;
+}
 // ========== PARSING FUNCTIONS ==========
 
 function parseHoursData(data, park) {
@@ -358,7 +425,38 @@ function parseParadeData(data) {
   
   return parades;
 }
+function parseParadeData(data) {
+  // ... existing parseParadeData code stays the same ...
+  return parades;
+}
 
+// ADD THE NEW FUNCTION HERE - RIGHT AFTER parseParadeData ENDS
+function parseWaitTimesData(data, park) {
+  const attractions = [];
+  
+  // Queue-Times format
+  if (data.lands && Array.isArray(data.lands)) {
+    data.lands.forEach(land => {
+      if (land.rides && Array.isArray(land.rides)) {
+        land.rides.forEach(ride => {
+          attractions.push({
+            id: `${park}-${ride.id}`,
+            name: ride.name,
+            land: land.name,
+            waitTime: ride.wait_time || 0,
+            isOpen: ride.is_open || false,
+            fastPassAvailable: ride.fast_pass || false,
+            lastUpdated: ride.last_updated || new Date().toISOString()
+          });
+        });
+      }
+    });
+  }
+  
+  return attractions;
+}
+
+// ========== HELPER FUNCTIONS ==========
 // ========== HELPER FUNCTIONS ==========
 
 function getSourceName(url) {
@@ -514,7 +612,33 @@ function getFallbackParades(park) {
     lastUpdated: new Date().toISOString()
   };
 }
-
+// Add this function after getFallbackParades function
+function getFallbackWaitTimes(park) {
+  const fallbacks = {
+    'magic-kingdom': [
+      { id: 'mk-space-mountain', name: 'Space Mountain', land: 'Tomorrowland', waitTime: 45, isOpen: true, fastPassAvailable: true },
+      { id: 'mk-pirates', name: 'Pirates of the Caribbean', land: 'Adventureland', waitTime: 25, isOpen: true, fastPassAvailable: false },
+      { id: 'mk-haunted-mansion', name: 'Haunted Mansion', land: 'Liberty Square', waitTime: 30, isOpen: true, fastPassAvailable: true }
+    ],
+    'epcot': [
+      { id: 'ep-guardians', name: 'Guardians of the Galaxy: Cosmic Rewind', land: 'Future World', waitTime: 85, isOpen: true, fastPassAvailable: true },
+      { id: 'ep-test-track', name: 'Test Track', land: 'Future World', waitTime: 55, isOpen: true, fastPassAvailable: true }
+    ],
+    'hollywood-studios': [
+      { id: 'hs-rise', name: 'Star Wars: Rise of the Resistance', land: 'Star Wars: Galaxy\'s Edge', waitTime: 120, isOpen: true, fastPassAvailable: true }
+    ],
+    'animal-kingdom': [
+      { id: 'ak-avatar', name: 'Avatar Flight of Passage', land: 'Pandora', waitTime: 90, isOpen: true, fastPassAvailable: true }
+    ]
+  };
+  
+  return {
+    park,
+    attractions: fallbacks[park] || fallbacks['magic-kingdom'],
+    source: 'fallback',
+    lastUpdated: new Date().toISOString()
+  };
+}
 // ========== MONITORING ENDPOINTS ==========
 
 app.get('/health', (req, res) => {
