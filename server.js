@@ -60,6 +60,7 @@ app.get('/', (req, res) => {
       'GET /api/disney/park-hours/:park',
       'GET /api/disney/entertainment/:park', 
       'GET /api/disney/parade-times/:park',
+      'GET /api/disney/wait-times/:park',
       'GET /health'
     ],
     usage: 'This proxy solves CORS issues for Disney park data'
@@ -138,7 +139,35 @@ app.get('/api/disney/entertainment/:park?', async (req, res) => {
 app.get('/api/disney/parade-times/:park?', async (req, res) => {
   const park = req.params.park || 'magic-kingdom';
   const cacheKey = `parades_${park}`;
-  // 🎢 Wait Times Endpoint - ADD THIS AFTER THE PARADE ENDPOINT (around line 140)
+  
+  try {
+    const cached = caches.entertainment.get(cacheKey);
+    if (cached) {
+      return res.json({ ...cached, fromCache: true });
+    }
+    
+    console.log(`🎪 Fetching parade data for ${park}`);
+    
+    const paradeData = await fetchParadeData(park);
+    
+    if (paradeData) {
+      caches.entertainment.set(cacheKey, paradeData);
+      res.json({ ...paradeData, fromCache: false });
+    } else {
+      const fallback = getFallbackParades(park);
+      res.json({ ...fallback, source: 'fallback' });
+    }
+    
+  } catch (error) {
+    console.error(`❌ Parade data error:`, error.message);
+    res.status(500).json({
+      error: 'Failed to fetch parade data',
+      fallback: getFallbackParades(park)
+    });
+  }
+});
+
+// 🎢 Wait Times Endpoint - FIXED AND PROPERLY PLACED
 app.get('/api/disney/wait-times/:park?', async (req, res) => {
   const park = req.params.park || 'magic-kingdom';
   const cacheKey = `wait_times_${park}`;
@@ -168,32 +197,6 @@ app.get('/api/disney/wait-times/:park?', async (req, res) => {
     res.status(500).json({
       error: 'Failed to fetch wait times',
       fallback: getFallbackWaitTimes(park)
-    });
-  }
-});
-  try {
-    const cached = caches.entertainment.get(cacheKey);
-    if (cached) {
-      return res.json({ ...cached, fromCache: true });
-    }
-    
-    console.log(`🎪 Fetching parade data for ${park}`);
-    
-    const paradeData = await fetchParadeData(park);
-    
-    if (paradeData) {
-      caches.entertainment.set(cacheKey, paradeData);
-      res.json({ ...paradeData, fromCache: false });
-    } else {
-      const fallback = getFallbackParades(park);
-      res.json({ ...fallback, source: 'fallback' });
-    }
-    
-  } catch (error) {
-    console.error(`❌ Parade data error:`, error.message);
-    res.status(500).json({
-      error: 'Failed to fetch parade data',
-      fallback: getFallbackParades(park)
     });
   }
 });
@@ -308,7 +311,8 @@ async function fetchParadeData(park) {
   
   return null;
 }
-// Add this function after fetchParadeData function
+
+// FIXED: Wait times fetching function
 async function fetchWaitTimes(park) {
   const sources = [
     `https://queue-times.com/parks/${getParkId(park)}/queue_times.json`,
@@ -344,6 +348,7 @@ async function fetchWaitTimes(park) {
   
   return null;
 }
+
 // ========== PARSING FUNCTIONS ==========
 
 function parseHoursData(data, park) {
@@ -425,12 +430,8 @@ function parseParadeData(data) {
   
   return parades;
 }
-function parseParadeData(data) {
-  // ... existing parseParadeData code stays the same ...
-  return parades;
-}
 
-// ADD THE NEW FUNCTION HERE - RIGHT AFTER parseParadeData ENDS
+// FIXED: Wait times parsing function
 function parseWaitTimesData(data, park) {
   const attractions = [];
   
@@ -456,7 +457,6 @@ function parseWaitTimesData(data, park) {
   return attractions;
 }
 
-// ========== HELPER FUNCTIONS ==========
 // ========== HELPER FUNCTIONS ==========
 
 function getSourceName(url) {
@@ -612,7 +612,8 @@ function getFallbackParades(park) {
     lastUpdated: new Date().toISOString()
   };
 }
-// Add this function after getFallbackParades function
+
+// FIXED: Wait times fallback function
 function getFallbackWaitTimes(park) {
   const fallbacks = {
     'magic-kingdom': [
@@ -639,6 +640,7 @@ function getFallbackWaitTimes(park) {
     lastUpdated: new Date().toISOString()
   };
 }
+
 // ========== MONITORING ENDPOINTS ==========
 
 app.get('/health', (req, res) => {
@@ -649,7 +651,8 @@ app.get('/health', (req, res) => {
     memory: process.memoryUsage(),
     cacheStats: {
       parkHours: caches.parkHours.getStats(),
-      entertainment: caches.entertainment.getStats()
+      entertainment: caches.entertainment.getStats(),
+      waitTimes: caches.waitTimes.getStats()
     }
   });
 });
@@ -687,5 +690,6 @@ app.listen(PORT, () => {
   console.log(`   GET /api/disney/park-hours/:park`);
   console.log(`   GET /api/disney/entertainment/:park`);
   console.log(`   GET /api/disney/parade-times/:park`);
+  console.log(`   GET /api/disney/wait-times/:park`);
   console.log(`   GET /health`);
 });
