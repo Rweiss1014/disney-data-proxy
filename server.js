@@ -102,7 +102,7 @@ app.get('/api/disney/park-hours/:park?', async (req, res) => {
   }
 });
 
-// 🎭 Entertainment Endpoint
+// 🎭 ENHANCED Entertainment Endpoint
 app.get('/api/disney/entertainment/:park?', async (req, res) => {
   const park = req.params.park || 'magic-kingdom';
   const cacheKey = `entertainment_${park}`;
@@ -114,22 +114,72 @@ app.get('/api/disney/entertainment/:park?', async (req, res) => {
       return res.json({ ...cached, fromCache: true });
     }
     
-    console.log(`🎭 Fetching fresh entertainment data for ${park}`);
+    console.log(`🎭 Fetching comprehensive entertainment data for ${park}`);
     
-    const entertainmentData = await fetchEntertainmentData(park);
+    // Fetch from multiple sources in parallel
+    const [
+      baseEntertainment,
+      characterData,
+      castleShows,
+      streetmosphere
+    ] = await Promise.all([
+      fetchEntertainmentData(park),     // Your existing function
+      fetchCharacterMeetData(park),     // New character data
+      fetchCastleShowData(park),        // New castle shows
+      fetchStreetmosphereData(park)     // New streetmosphere
+    ]);
     
-    if (entertainmentData) {
-      caches.entertainment.set(cacheKey, entertainmentData);
-      res.json({ ...entertainmentData, fromCache: false });
-    } else {
-      const fallback = getFallbackEntertainment(park);
-      res.json({ ...fallback, source: 'fallback' });
+    // Combine all entertainment data
+    let allEntertainment = [];
+    
+    // Add base entertainment (parades, fireworks, shows)
+    if (baseEntertainment && baseEntertainment.entertainment) {
+      allEntertainment.push(...baseEntertainment.entertainment);
     }
     
+    // Add character meets
+    if (characterData && characterData.characters) {
+      allEntertainment.push(...characterData.characters);
+    }
+    
+    // Add castle shows
+    if (castleShows && castleShows.castleShows) {
+      allEntertainment.push(...castleShows.castleShows);
+    }
+    
+    // Add streetmosphere
+    if (streetmosphere && streetmosphere.streetmosphere) {
+      allEntertainment.push(...streetmosphere.streetmosphere);
+    }
+    
+    // If no real data found, use fallbacks
+    if (allEntertainment.length === 0) {
+      const fallback = getFallbackEntertainment(park);
+      allEntertainment = fallback.entertainment;
+    }
+    
+    const result = {
+      park,
+      entertainment: allEntertainment,
+      sources: {
+        base: baseEntertainment?.source || 'fallback',
+        characters: characterData?.source || 'fallback',
+        castle: castleShows?.source || 'not_applicable',
+        streetmosphere: streetmosphere?.source || 'fallback'
+      },
+      totalItems: allEntertainment.length,
+      lastUpdated: new Date().toISOString()
+    };
+    
+    console.log(`✅ Combined entertainment data: ${allEntertainment.length} items from multiple sources`);
+    
+    caches.entertainment.set(cacheKey, result);
+    res.json({ ...result, fromCache: false });
+    
   } catch (error) {
-    console.error(`❌ Entertainment error for ${park}:`, error.message);
+    console.error(`❌ Enhanced entertainment error for ${park}:`, error.message);
     res.status(500).json({
-      error: 'Failed to fetch entertainment data',
+      error: 'Failed to fetch enhanced entertainment data',
       fallback: getFallbackEntertainment(park)
     });
   }
@@ -167,7 +217,7 @@ app.get('/api/disney/parade-times/:park?', async (req, res) => {
   }
 });
 
-// 🎢 Wait Times Endpoint - FIXED AND PROPERLY PLACED
+// 🎢 Wait Times Endpoint
 app.get('/api/disney/wait-times/:park?', async (req, res) => {
   const park = req.params.park || 'magic-kingdom';
   const cacheKey = `wait_times_${park}`;
@@ -277,6 +327,127 @@ async function fetchEntertainmentData(park) {
   return null;
 }
 
+async function fetchCharacterMeetData(park) {
+  const sources = [
+    // TouringPlans character meets
+    `https://touringplans.com/${park}/character-meets.json`,
+    `https://touringplans.com/${park}/characters.json`,
+    
+    // ThemeParks.Wiki character data
+    `https://api.themeparks.wiki/v1/entity/WaltDisneyWorld${capitalize(park)}/characters`,
+    
+    // Alternative character sources
+    `https://disneyapi.dev/api/character/meet-greets/${park}`,
+    `https://wdwstats.com/api/${park}/characters.json`
+  ];
+  
+  for (const source of sources) {
+    try {
+      console.log(`📡 Trying character data source: ${source}`);
+      
+      const response = await axios.get(source, {
+        headers: {
+          'User-Agent': 'PixiePal Disney Companion App/1.0 (+https://pixiepal.app)',
+          'Accept': 'application/json'
+        },
+        timeout: 8000
+      });
+      
+      if (response.data && (Array.isArray(response.data) || response.data.characters)) {
+        console.log(`✅ Got character data from: ${getSourceName(source)}`);
+        return {
+          characters: parseCharacterData(response.data, park),
+          source: getSourceName(source),
+          lastUpdated: new Date().toISOString()
+        };
+      }
+    } catch (error) {
+      console.log(`❌ Failed character source: ${source} - ${error.message}`);
+      continue;
+    }
+  }
+  
+  return null;
+}
+
+async function fetchCastleShowData(park) {
+  if (park !== 'magic-kingdom') return null;
+  
+  const sources = [
+    // Castle-specific show data
+    'https://touringplans.com/magic-kingdom/castle-shows.json',
+    'https://api.themeparks.wiki/v1/entity/WaltDisneyWorldMagicKingdom/castle-entertainment',
+    'https://wdwstats.com/api/magic-kingdom/castle.json',
+    
+    // Disney blogs with castle show times
+    'https://blog.touringplans.com/api/castle-shows/today.json'
+  ];
+  
+  for (const source of sources) {
+    try {
+      console.log(`🏰 Trying castle show source: ${source}`);
+      
+      const response = await axios.get(source, {
+        headers: {
+          'User-Agent': 'PixiePal Disney Companion App/1.0',
+          'Accept': 'application/json'
+        },
+        timeout: 8000
+      });
+      
+      if (response.data) {
+        console.log(`✅ Got castle show data from: ${getSourceName(source)}`);
+        return {
+          castleShows: parseCastleShowData(response.data),
+          source: getSourceName(source),
+          lastUpdated: new Date().toISOString()
+        };
+      }
+    } catch (error) {
+      console.log(`❌ Failed castle source: ${source} - ${error.message}`);
+      continue;
+    }
+  }
+  
+  return null;
+}
+
+async function fetchStreetmosphereData(park) {
+  const sources = [
+    `https://touringplans.com/${park}/streetmosphere.json`,
+    `https://api.themeparks.wiki/v1/entity/WaltDisneyWorld${capitalize(park)}/streetmosphere`,
+    `https://wdwstats.com/api/${park}/street-entertainment.json`
+  ];
+  
+  for (const source of sources) {
+    try {
+      console.log(`🎭 Trying streetmosphere source: ${source}`);
+      
+      const response = await axios.get(source, {
+        headers: {
+          'User-Agent': 'PixiePal Disney Companion App/1.0',
+          'Accept': 'application/json'
+        },
+        timeout: 8000
+      });
+      
+      if (response.data && Array.isArray(response.data)) {
+        console.log(`✅ Got streetmosphere from: ${getSourceName(source)}`);
+        return {
+          streetmosphere: parseStreetmosphereData(response.data, park),
+          source: getSourceName(source),
+          lastUpdated: new Date().toISOString()
+        };
+      }
+    } catch (error) {
+      console.log(`❌ Failed streetmosphere source: ${source} - ${error.message}`);
+      continue;
+    }
+  }
+  
+  return null;
+}
+
 async function fetchParadeData(park) {
   const sources = [
     `https://touringplans.com/${park}/shows.json`,
@@ -312,7 +483,6 @@ async function fetchParadeData(park) {
   return null;
 }
 
-// FIXED: Wait times fetching function
 async function fetchWaitTimes(park) {
   const sources = [
     `https://queue-times.com/parks/${getParkId(park)}/queue_times.json`,
@@ -411,6 +581,69 @@ function parseEntertainmentData(data) {
   return entertainment;
 }
 
+function parseCharacterData(data, park) {
+  const characters = [];
+  const dataArray = Array.isArray(data) ? data : data.characters || [];
+  
+  dataArray.forEach(item => {
+    if (item.type === 'character' || item.category === 'character-meet') {
+      characters.push({
+        id: item.id || item.name.replace(/[^a-z0-9]/gi, '_'),
+        name: item.name,
+        type: 'character',
+        characters: item.characters || [item.character] || ['Various Characters'],
+        times: item.times || item.schedule || ['Times vary - check Disney app'],
+        location: item.location || item.venue || 'Check Disney app',
+        waitTime: item.waitTime || item.wait_time || 'Varies',
+        duration: item.duration || 30
+      });
+    }
+  });
+  
+  return characters;
+}
+
+function parseCastleShowData(data) {
+  const shows = [];
+  const dataArray = Array.isArray(data) ? data : [data];
+  
+  dataArray.forEach(item => {
+    if (item.location && item.location.toLowerCase().includes('castle')) {
+      shows.push({
+        id: item.id || 'castle_' + item.name.replace(/[^a-z0-9]/gi, '_'),
+        name: item.name,
+        type: 'castle_show',
+        times: item.times || item.schedule || ['Times vary daily'],
+        location: 'Cinderella Castle',
+        duration: item.duration || 15,
+        description: item.description || 'Castle entertainment'
+      });
+    }
+  });
+  
+  return shows;
+}
+
+function parseStreetmosphereData(data, park) {
+  const streetmosphere = [];
+  
+  data.forEach(item => {
+    if (item.type === 'streetmosphere' || item.category === 'street-entertainment') {
+      streetmosphere.push({
+        id: item.id || item.name.replace(/[^a-z0-9]/gi, '_'),
+        name: item.name,
+        type: 'streetmosphere',
+        times: item.times || ['Throughout the day'],
+        location: item.location || item.area || 'Various locations',
+        duration: item.duration || 15,
+        description: item.description
+      });
+    }
+  });
+  
+  return streetmosphere;
+}
+
 function parseParadeData(data) {
   const parades = [];
   
@@ -431,7 +664,6 @@ function parseParadeData(data) {
   return parades;
 }
 
-// FIXED: Wait times parsing function
 function parseWaitTimesData(data, park) {
   const attractions = [];
   
@@ -463,6 +695,8 @@ function getSourceName(url) {
   if (url.includes('touringplans')) return 'touringplans';
   if (url.includes('queue-times')) return 'queue_times';
   if (url.includes('themeparks')) return 'themeparks_wiki';
+  if (url.includes('disneyapi')) return 'disneyapi';
+  if (url.includes('wdwstats')) return 'wdwstats';
   return 'unknown';
 }
 
@@ -613,7 +847,6 @@ function getFallbackParades(park) {
   };
 }
 
-// FIXED: Wait times fallback function
 function getFallbackWaitTimes(park) {
   const fallbacks = {
     'magic-kingdom': [
