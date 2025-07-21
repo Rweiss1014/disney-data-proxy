@@ -6,7 +6,13 @@ const rateLimit = require('express-rate-limit');
 const NodeCache = require('node-cache');
 const helmet = require('helmet');
 
+// ADD this line right after creating the Express app
 const app = express();
+
+// FIX: Add trust proxy setting for Render deployment
+app.set('trust proxy', 1); // Trust first proxy (Render's load balancer)
+
+// Rest of your existing code...
 
 // ========== SECURITY & MIDDLEWARE ==========
 app.use(helmet());
