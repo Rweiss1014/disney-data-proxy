@@ -431,7 +431,10 @@ async function fetchCharacterMeetData(park) {
       continue;
     }
   }
-  // NEW: Scrape live character times from Theme Park IQ
+  
+  return null;
+}
+// NEW: Scrape live character times from Theme Park IQ
 async function scrapeThemeParkIQCharacters(park) {
   // Only scrape for Magic Kingdom for now
   if (park !== 'magic-kingdom') return null;
@@ -479,9 +482,6 @@ async function scrapeThemeParkIQCharacters(park) {
     return null;
   }
 }
-  return null;
-}
-
 async function fetchCastleShowData(park) {
   if (park !== 'magic-kingdom') return null;
   
