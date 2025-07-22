@@ -202,10 +202,25 @@ const staticCharacterMeets = [
       const fallback = getFallbackEntertainment(park);
       allEntertainment = fallback.entertainment;
     }
-    // Add static character meets (always available)
+   // Add static character meets + live scraping (always available)
 if (park === 'magic-kingdom') {
+  // First add static character meets (guaranteed locations)
   allEntertainment.push(...staticCharacterMeets);
   console.log(`✅ Added ${staticCharacterMeets.length} static character meets`);
+  
+  // Try to get live character times from Theme Park IQ
+  try {
+    const liveCharacterData = await scrapeThemeParkIQCharacters(park);
+    if (liveCharacterData && liveCharacterData.characters.length > 0) {
+      // Merge live times with static locations
+      allEntertainment.push(...liveCharacterData.characters);
+      console.log(`✅ Added ${liveCharacterData.characters.length} live character times from Theme Park IQ`);
+    } else {
+      console.log(`📋 No live character data found, using static data only`);
+    }
+  } catch (error) {
+    console.log(`❌ Live character scraping failed: ${error.message}, using static data only`);
+  }
 }
     const result = {
       park,
@@ -415,7 +430,54 @@ async function fetchCharacterMeetData(park) {
       continue;
     }
   }
+  // NEW: Scrape live character times from Theme Park IQ
+async function scrapeThemeParkIQCharacters(park) {
+  // Only scrape for Magic Kingdom for now
+  if (park !== 'magic-kingdom') return null;
   
+  try {
+    console.log(`🎭 Scraping live character times from Theme Park IQ...`);
+    
+    const response = await axios.get('https://www.themeparkiq.com/disneyworld/character/schedule', {
+      headers: {
+        'User-Agent': 'PixiePal Disney Companion App/1.0 (+https://pixiepal.app)',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      },
+      timeout: 10000
+    });
+    
+    const cheerio = require('cheerio');
+    const $ = cheerio.load(response.data);
+    
+    const liveCharacters = [];
+    
+    // Look for Magic Kingdom character data in the HTML
+    console.log(`📄 Got HTML response, parsing for Magic Kingdom characters...`);
+    
+    // For now, let's just log what we find and return empty array
+    // We'll refine the parsing after we see the HTML structure
+    const pageTitle = $('title').text();
+    console.log(`📋 Page title: ${pageTitle}`);
+    
+    // Look for any text containing "Magic Kingdom"
+    $('*').each((index, element) => {
+      const text = $(element).text();
+      if (text.includes('Magic Kingdom') && text.includes('appear')) {
+        console.log(`🏰 Found Magic Kingdom mention: ${text.substring(0, 100)}...`);
+      }
+    });
+    
+    return {
+      characters: liveCharacters,
+      source: 'theme_park_iq',
+      lastUpdated: new Date().toISOString()
+    };
+    
+  } catch (error) {
+    console.log(`❌ Failed to scrape Theme Park IQ: ${error.message}`);
+    return null;
+  }
+}
   return null;
 }
 
