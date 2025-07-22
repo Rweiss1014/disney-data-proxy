@@ -463,13 +463,25 @@ async function scrapeThemeParkIQCharacters(park) {
     const pageTitle = $('title').text();
     console.log(`📋 Page title: ${pageTitle}`);
     
-    // Look for any text containing "Magic Kingdom"
-    $('*').each((index, element) => {
-      const text = $(element).text();
-      if (text.includes('Magic Kingdom') && text.includes('appear')) {
-        console.log(`🏰 Found Magic Kingdom mention: ${text.substring(0, 100)}...`);
-      }
-    });
+   // Look for character data more specifically
+$('div, span, p, td').each((index, element) => {
+  const text = $(element).text().trim();
+  
+  // Look for character names and times
+  if (text.includes('Mickey') || text.includes('Princess') || text.includes('Tinker Bell')) {
+    console.log(`🎭 Found character mention: ${text.substring(0, 200)}...`);
+  }
+  
+  // Look for time patterns (like "2:15 PM" or "Next appearance")
+  if (text.match(/\d{1,2}:\d{2}\s?(AM|PM)/i) || text.includes('appearance')) {
+    console.log(`⏰ Found time pattern: ${text.substring(0, 100)}...`);
+  }
+  
+  // Look for Magic Kingdom specific data
+  if (text.includes('Magic Kingdom') && text.length < 200) {
+    console.log(`🏰 MK data: ${text}`);
+  }
+});
     
     return {
       characters: liveCharacters,
