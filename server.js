@@ -5,6 +5,7 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const NodeCache = require('node-cache');
 const helmet = require('helmet');
+const cheerio = require('cheerio');
 
 // ADD this line right after creating the Express app
 const app = express();
