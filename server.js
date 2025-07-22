@@ -122,6 +122,45 @@ app.get('/api/disney/entertainment/:park?', async (req, res) => {
     
     console.log(`🎭 Fetching comprehensive entertainment data for ${park}`);
     
+    // Static character meet locations (always accurate)
+const staticCharacterMeets = [
+  {
+    id: "princess_fairytale_hall",
+    name: "Princess Meet & Greet",
+    type: "character_meet",
+    times: ["Park open to close"],
+    location: "Princess Fairytale Hall, Fantasyland",
+    characters: ["Cinderella", "Elena", "Tiana", "Rapunzel"],
+    duration: 15
+  },
+  {
+    id: "town_square_theater_mickey",
+    name: "Mickey Mouse Meet & Greet", 
+    type: "character_meet",
+    times: ["Park open to close"],
+    location: "Town Square Theater, Main Street USA",
+    characters: ["Mickey Mouse"],
+    duration: 15
+  },
+  {
+    id: "town_square_theater_tinker_bell",
+    name: "Tinker Bell Meet & Greet",
+    type: "character_meet", 
+    times: ["Select times daily"],
+    location: "Town Square Theater, Main Street USA",
+    characters: ["Tinker Bell"],
+    duration: 15
+  },
+  {
+    id: "petes_silly_sideshow",
+    name: "Fab Four Meet & Greet",
+    type: "character_meet",
+    times: ["Park open to close"],
+    location: "Pete's Silly Sideshow, Fantasyland", 
+    characters: ["Goofy", "Donald Duck", "Minnie Mouse", "Daisy Duck"],
+    duration: 15
+  }
+];
     // Fetch from multiple sources in parallel
     const [
       baseEntertainment,
@@ -163,7 +202,11 @@ app.get('/api/disney/entertainment/:park?', async (req, res) => {
       const fallback = getFallbackEntertainment(park);
       allEntertainment = fallback.entertainment;
     }
-    
+    // Add static character meets (always available)
+if (park === 'magic-kingdom') {
+  allEntertainment.push(...staticCharacterMeets);
+  console.log(`✅ Added ${staticCharacterMeets.length} static character meets`);
+}
     const result = {
       park,
       entertainment: allEntertainment,
