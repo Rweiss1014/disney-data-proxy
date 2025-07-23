@@ -1,4 +1,4 @@
-// Production-Ready Disney Data Proxy Server with DeepSeek Improvements
+// Production-Ready Disney Data Proxy Server v3.0
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -19,7 +19,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"]
     }
   },
@@ -119,7 +119,7 @@ const fetchWithRetry = async (url, options = {}, retries = 2) => {
     console.log(`🌐 Fetching: ${url} (${retries + 1} attempts left) - Request ID: ${requestId}`);
     
     const response = await axios.get(url, {
-      timeout: 5000, // 5-second timeout (DeepSeek suggestion)
+      timeout: 5000, // 5-second timeout
       headers: {
         'User-Agent': 'PixiePal Disney Companion App/2.0 (+https://pixiepal.app)',
         'Accept': 'application/json',
@@ -168,7 +168,7 @@ const waitTimesBreaker = new CircuitBreaker(
       }
     ];
 
-    // Sort by priority (DeepSeek suggestion)
+    // Sort by priority
     sources.sort((a, b) => a.priority - b.priority);
 
     for (const { url, timeout } of sources) {
@@ -206,19 +206,18 @@ waitTimesBreaker.fallback(async (park, requestId) => {
   return getFallbackWaitTimes(park);
 });
 
-// ========== ENHANCED ENDPOINTS ==========
+// ========== ENDPOINTS ==========
 
 // Welcome endpoint with system status
 app.get('/', (req, res) => {
   res.json({
     message: '🏰 Disney Data Proxy Server - Production Ready',
-    version: '2.1.0',
+    version: '3.0.0',
     status: 'active',
     requestId: req.id,
     endpoints: [
       'GET /api/disney/park-hours/:park',
       'GET /api/disney/entertainment/:park', 
-      'GET /api/disney/parade-times/:park',
       'GET /api/disney/wait-times/:park',
       'GET /health',
       'GET /debug/themeparkiq',
@@ -234,13 +233,99 @@ app.get('/', (req, res) => {
   });
 });
 
-// Enhanced Wait Times endpoint
+// ========== PARK HOURS ENDPOINT (FIXED) ==========
+app.get('/api/disney/park-hours/:park', validatePark, async (req, res) => {
+  const park = req.park;
+  const cacheKey = `park_hours_${park}`;
+  
+  try {
+    // Check cache first
+    const cached = caches.parkHours.get(cacheKey);
+    if (cached) {
+      console.log(`💾 Cache hit for park hours: ${park} - Request ID: ${req.id}`);
+      return res.json({ 
+        ...cached, 
+        fromCache: true,
+        requestId: req.id
+      });
+    }
+
+    console.log(`🕐 Fetching park hours for ${park} - Request ID: ${req.id}`);
+    
+    // Static park hours (would be replaced with real data source in production)
+    const parkHoursData = {
+      'magic-kingdom': {
+        date: new Date().toISOString().split('T')[0],
+        openingTime: '09:00',
+        closingTime: '23:00',
+        type: 'Operating',
+        park: 'Magic Kingdom',
+        specialHours: null,
+        lastUpdated: new Date().toISOString()
+      },
+      'epcot': {
+        date: new Date().toISOString().split('T')[0],
+        openingTime: '09:00',
+        closingTime: '21:00',
+        type: 'Operating',
+        park: 'EPCOT',
+        specialHours: null,
+        lastUpdated: new Date().toISOString()
+      },
+      'hollywood-studios': {
+        date: new Date().toISOString().split('T')[0],
+        openingTime: '09:00',
+        closingTime: '21:00',
+        type: 'Operating',
+        park: 'Hollywood Studios',
+        specialHours: null,
+        lastUpdated: new Date().toISOString()
+      },
+      'animal-kingdom': {
+        date: new Date().toISOString().split('T')[0],
+        openingTime: '08:00',
+        closingTime: '20:00',
+        type: 'Operating',
+        park: 'Animal Kingdom',
+        specialHours: null,
+        lastUpdated: new Date().toISOString()
+      }
+    };
+    
+    const hoursData = parkHoursData[park] || parkHoursData['magic-kingdom'];
+    
+    // Cache the result
+    caches.parkHours.set(cacheKey, hoursData);
+    dataState.lastSuccessfulFetch.parkHours = new Date();
+    
+    res.json({ 
+      ...hoursData,
+      fromCache: false,
+      requestId: req.id
+    });
+    
+  } catch (error) {
+    console.error(`❌ Park hours error for ${park}: ${error.message} - Request ID: ${req.id}`);
+    res.status(500).json({
+      error: 'Failed to fetch park hours',
+      referenceId: req.id,
+      fallback: {
+        date: new Date().toISOString().split('T')[0],
+        openingTime: '09:00',
+        closingTime: '21:00',
+        type: 'Operating',
+        park: park
+      }
+    });
+  }
+});
+
+// ========== WAIT TIMES ENDPOINT ==========
 app.get('/api/disney/wait-times/:park?', validatePark, async (req, res) => {
   const park = req.park;
   const cacheKey = `wait_times_${park}`;
   
   try {
-    // Check cache first
     const cached = caches.waitTimes.get(cacheKey);
     if (cached) {
       console.log(`💾 Cache hit for wait times: ${park} - Request ID: ${req.id}`);
@@ -279,7 +364,7 @@ app.get('/api/disney/wait-times/:park?', validatePark, async (req, res) => {
   }
 });
 
-// Enhanced Entertainment endpoint
+// ========== ENTERTAINMENT ENDPOINT (ENHANCED FOR OPENAI) ==========
 app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
   const park = req.park;
   const cacheKey = `entertainment_${park}`;
@@ -297,7 +382,7 @@ app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
 
     console.log(`🎭 Fetching entertainment for ${park} - Request ID: ${req.id}`);
     
-    // Static character meets (guaranteed accurate)
+    // Static character meets
     const staticCharacterMeets = getStaticCharacterMeets(park);
     
     // Try to fetch additional entertainment data
@@ -306,7 +391,6 @@ app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
         console.log(`⚠️ Base entertainment fetch failed: ${err.message} - Request ID: ${req.id}`);
         return null;
       }),
-      // Theme Park IQ scraping (DeepSeek enhancement)
       scrapeThemeParkIQCharacters(park, req.id).catch(err => {
         console.log(`⚠️ Character scraping failed: ${err.message} - Request ID: ${req.id}`);
         return { characters: [] };
@@ -326,9 +410,23 @@ app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
       allEntertainment = getFallbackEntertainment(park).entertainment;
     }
     
+    // FORMAT FOR OPENAI CONTEXT
+    const characterMeetData = allEntertainment
+      .filter(item => item.type === 'character_meet')
+      .map(meet => ({
+        id: meet.id,
+        name: meet.name,
+        type: meet.type,
+        times: meet.times,
+        location: meet.location,
+        characters: meet.characters,
+        duration: meet.duration
+      }));
+    
     const result = {
       park,
       entertainment: allEntertainment,
+      characterMeets: characterMeetData, // Special OpenAI-friendly format
       sources: {
         base: baseEntertainment?.source || 'fallback',
         characters: characterData?.characters?.length > 0 ? 'theme_park_iq' : 'static',
@@ -342,7 +440,7 @@ app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
     caches.entertainment.set(cacheKey, result);
     dataState.lastSuccessfulFetch.entertainment = new Date();
     
-    res.json({ ...result, fromCache: false });
+    res.json(result);
     
   } catch (error) {
     console.error(`❌ Entertainment error for ${park}: ${error.message} - Request ID: ${req.id}`);
@@ -355,33 +453,7 @@ app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
   }
 });
 
-// ========== ENHANCED HEALTH CHECK ==========
-app.get('/health', (req, res) => {
-  const status = {
-    status: 'OK',
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    caches: {
-      parkHours: caches.parkHours.keys().length,
-      entertainment: caches.entertainment.keys().length,
-      waitTimes: caches.waitTimes.keys().length
-    },
-    lastSuccessfulFetch: dataState.lastSuccessfulFetch,
-    errorCounts: dataState.errorCounts,
-    circuitBreaker: {
-      waitTimes: {
-        state: waitTimesBreaker.state,
-        stats: waitTimesBreaker.stats
-      }
-    },
-    timestamp: new Date().toISOString(),
-    requestId: req.id
-  };
-  
-  res.status(200).json(status);
-});
-
-// ========== DEBUG ENDPOINT FOR CHARACTER SCRAPING ==========
+// ========== DEBUG ENDPOINTS ==========
 app.get('/debug/themeparkiq', async (req, res) => {
   try {
     console.log(`🐛 DEBUG: Testing ThemeParkIQ scraper - Request ID: ${req.id}`);
@@ -414,7 +486,6 @@ app.get('/debug/themeparkiq', async (req, res) => {
   }
 });
 
-// ========== DEBUG ENDPOINT FOR STATIC CHARACTER DATA ==========
 app.get('/debug/static-characters/:park?', validatePark, (req, res) => {
   const park = req.park;
   const staticData = getStaticCharacterMeets(park);
@@ -473,7 +544,33 @@ app.get('/api/cache/status', (req, res) => {
   });
 });
 
-// ========== ENHANCED CHARACTER SCRAPING WITH DEBUGGING ==========
+// ========== HEALTH CHECK ENDPOINT ==========
+app.get('/health', (req, res) => {
+  const status = {
+    status: 'OK',
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    caches: {
+      parkHours: caches.parkHours.keys().length,
+      entertainment: caches.entertainment.keys().length,
+      waitTimes: caches.waitTimes.keys().length
+    },
+    lastSuccessfulFetch: dataState.lastSuccessfulFetch,
+    errorCounts: dataState.errorCounts,
+    circuitBreaker: {
+      waitTimes: {
+        state: waitTimesBreaker.state,
+        stats: waitTimesBreaker.stats
+      }
+    },
+    timestamp: new Date().toISOString(),
+    requestId: req.id
+  };
+  
+  res.status(200).json(status);
+});
+
+// ========== CHARACTER SCRAPING FUNCTION ==========
 async function scrapeThemeParkIQCharacters(park, requestId) {
   if (park !== 'magic-kingdom') {
     return { characters: [] };
@@ -482,7 +579,7 @@ async function scrapeThemeParkIQCharacters(park, requestId) {
   try {
     console.log(`🧚‍♀️ Starting ThemeParkIQ scrape for ${park} - Request ID: ${requestId}`);
     
-    // Step 1: Network reachability check
+    // Network reachability check
     try {
       await axios.head('https://www.themeparkiq.com', { timeout: 5000 });
       console.log(`✅ ThemeParkIQ site reachable - Request ID: ${requestId}`);
@@ -490,7 +587,7 @@ async function scrapeThemeParkIQCharacters(park, requestId) {
       throw new Error(`Site unreachable: ${headError.message}`);
     }
 
-    // Step 2: Make request with enhanced headers
+    // Make request with enhanced headers
     const response = await axios.get(
       'https://www.themeparkiq.com/disneyworld/character/schedule',
       {
@@ -499,168 +596,70 @@ async function scrapeThemeParkIQCharacters(park, requestId) {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, deflate, br',
           'Referer': 'https://www.google.com/',
-          'DNT': '1',
-          'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1'
+          'DNT': '1'
         },
-        validateStatus: () => true // Accept all status codes for debugging
+        validateStatus: () => true
       }
     );
 
-    // Step 3: Response diagnostics
+    // Response diagnostics
     console.log(`📊 ThemeParkIQ Response: ${response.status} ${response.statusText}`);
     console.log(`📏 Response size: ${response.data.length} bytes - Request ID: ${requestId}`);
     
-    // Step 4: Check for common blocking patterns
-    if (response.status === 403) {
-      throw new Error('HTTP 403 Forbidden - Server blocking requests');
-    }
-    if (response.status === 429) {
-      throw new Error('HTTP 429 Too Many Requests - Rate limited');
-    }
-    if (response.data.includes('Access Denied')) {
-      throw new Error('Blocked by access control');
-    }
-    if (response.data.includes('Cloudflare') && response.data.includes('checking')) {
-      throw new Error('Blocked by Cloudflare security challenge');
-    }
-    if (response.status !== 200) {
-      throw new Error(`Unexpected HTTP status: ${response.status}`);
-    }
+    // Check for blocking
+    if (response.status === 403) throw new Error('HTTP 403 Forbidden');
+    if (response.status === 429) throw new Error('HTTP 429 Too Many Requests');
+    if (response.data.includes('Access Denied')) throw new Error('Blocked by access control');
+    if (response.status !== 200) throw new Error(`Unexpected HTTP status: ${response.status}`);
 
     const $ = cheerio.load(response.data);
     const liveCharacters = [];
 
-    console.log(`🔍 Parsing HTML structure - Request ID: ${requestId}`);
-
-    // Strategy 1: Look for new structure (.character-schedule-container)
-    let foundCharacters = false;
+    // Parse character data
     $('.character-schedule-container').each((_, container) => {
       const parkName = $(container).find('h2, h3').text().trim();
-      console.log(`🏰 Found park section: "${parkName}" - Request ID: ${requestId}`);
+      if (!parkName.toLowerCase().includes('magic kingdom')) return;
       
-      if (parkName.toLowerCase().includes('magic kingdom')) {
-        foundCharacters = true;
-        $(container).find('.character-card, .character-schedule').each((_, card) => {
-          const name = $(card).find('.character-name').text().trim();
-          const location = $(card).find('.character-location').text().trim();
-          const times = [];
-          
-          $(card).find('.character-time-slot, .character-time, .time').each((_, slot) => {
-            const timeText = $(slot).text().trim();
-            if (timeText) times.push(timeText);
-          });
-          
-          if (name) {
-            liveCharacters.push({
-              id: `live_${name.replace(/\W+/g, '_').toLowerCase()}`,
-              name,
-              type: 'character_meet',
-              times: times.length ? times : ['Check Times'],
-              location: location || 'Magic Kingdom',
-              characters: [name],
-              source: 'theme_park_iq',
-              duration: 20
-            });
-            console.log(`✨ Found character: ${name} at ${location} - Request ID: ${requestId}`);
-          }
+      $(container).find('.character-card, .character-schedule').each((_, card) => {
+        const name = $(card).find('.character-name').text().trim();
+        const location = $(card).find('.character-location').text().trim();
+        const times = [];
+        
+        $(card).find('.character-time-slot, .character-time, .time').each((_, slot) => {
+          const timeText = $(slot).text().trim();
+          if (timeText) times.push(timeText);
         });
-      }
-    });
-
-    // Strategy 2: Look for older structure (fallback)
-    if (!foundCharacters) {
-      console.log(`🔄 Trying fallback selectors - Request ID: ${requestId}`);
-      
-      // Look for h2 with Magic Kingdom
-      $('h2, h3').each((_, heading) => {
-        const headingText = $(heading).text().trim();
-        if (headingText.toLowerCase().includes('magic kingdom')) {
-          foundCharacters = true;
-          console.log(`🏰 Found Magic Kingdom heading: "${headingText}" - Request ID: ${requestId}`);
-          
-          // Look for character data in next siblings
-          $(heading).nextAll().find('.character-schedule, .character-row, .character-card').each((_, element) => {
-            const name = $(element).find('.character-name, .name').text().trim();
-            const location = $(element).find('.character-location, .location').text().trim();
-            const times = [];
-            
-            $(element).find('.character-time, .time, .schedule-time').each((_, time) => {
-              const timeText = $(time).text().trim();
-              if (timeText) times.push(timeText);
-            });
-            
-            if (name) {
-              liveCharacters.push({
-                id: `live_${name.replace(/\W+/g, '_').toLowerCase()}`,
-                name,
-                type: 'character_meet',
-                times: times.length ? times : ['Check Times'],
-                location: location || 'Magic Kingdom',
-                characters: [name],
-                source: 'theme_park_iq',
-                duration: 20
-              });
-              console.log(`✨ Found character (fallback): ${name} - Request ID: ${requestId}`);
-            }
+        
+        if (name) {
+          liveCharacters.push({
+            id: `live_${name.replace(/\W+/g, '_').toLowerCase()}`,
+            name,
+            type: 'character_meet',
+            times: times.length ? times : ['Check Times'],
+            location: location || 'Magic Kingdom',
+            characters: [name],
+            source: 'theme_park_iq',
+            duration: 20
           });
         }
       });
-    }
-
-    // Strategy 3: If still no characters, log structure for debugging
-    if (liveCharacters.length === 0) {
-      console.warn(`⚠️ No characters found! Analyzing page structure - Request ID: ${requestId}`);
-      
-      // Log all headings found
-      const headings = [];
-      $('h1, h2, h3, h4').each((_, h) => {
-        headings.push($(h).text().trim());
-      });
-      console.log(`📋 Page headings found: ${JSON.stringify(headings)} - Request ID: ${requestId}`);
-      
-      // Log common class names that might contain character data
-      const possibleContainers = [];
-      $('[class*="character"], [class*="schedule"], [class*="Character"]').each((_, el) => {
-        possibleContainers.push(el.className);
-      });
-      console.log(`🔍 Possible character containers: ${JSON.stringify([...new Set(possibleContainers)])} - Request ID: ${requestId}`);
-      
-      // Log a snippet of the page for manual inspection
-      console.log(`📄 HTML snippet (first 800 chars): ${response.data.substring(0, 800)} - Request ID: ${requestId}`);
-    }
+    });
 
     console.log(`✅ ThemeParkIQ scrape completed: ${liveCharacters.length} characters found - Request ID: ${requestId}`);
     return { characters: liveCharacters };
     
   } catch (error) {
     console.error(`❌ ThemeParkIQ scrape FAILED: ${error.message} - Request ID: ${requestId}`);
-    
-    // Enhanced error diagnostics
-    if (error.response) {
-      console.error(`📊 HTTP Status: ${error.response.status} ${error.response.statusText} - Request ID: ${requestId}`);
-      console.error(`📋 Response Headers: ${JSON.stringify(error.response.headers)} - Request ID: ${requestId}`);
-      if (error.response.data) {
-        console.error(`📄 Response snippet: ${String(error.response.data).substring(0, 500)} - Request ID: ${requestId}`);
-      }
-    } else if (error.request) {
-      console.error(`🌐 Network error - no response received - Request ID: ${requestId}`);
-    } else {
-      console.error(`⚙️ Request configuration error: ${error.message} - Request ID: ${requestId}`);
-    }
-    
     return { characters: [] };
   }
 }
 
-// ========== DATA PARSING FUNCTIONS ==========
+// ========== UTILITY FUNCTIONS ==========
 function parseWaitTimesData(data, park) {
   const attractions = [];
   
   try {
-    // Queue-Times format parsing with error handling
     if (data.lands && Array.isArray(data.lands)) {
       data.lands.forEach(land => {
         if (land.rides && Array.isArray(land.rides)) {
@@ -686,11 +685,9 @@ function parseWaitTimesData(data, park) {
   return attractions;
 }
 
-// ========== UTILITY FUNCTIONS ==========
 function getSourceName(url) {
   if (url.includes('touringplans')) return 'touringplans';
   if (url.includes('queue-times')) return 'queue_times';
-  if (url.includes('themeparks')) return 'themeparks_wiki';
   return 'unknown';
 }
 
@@ -704,26 +701,26 @@ function getParkId(park) {
   return ids[park] || 6;
 }
 
-// ========== EXPANDED STATIC CHARACTER MEET DATA ==========
+// ========== STATIC CHARACTER DATA ==========
 function getStaticCharacterMeets(park) {
   const characterMeets = {
     'magic-kingdom': [
       {
         id: "princess_fairytale_hall",
-        name: "Princess Meet & Greet",
+        name: "Princess Fairytale Hall",
         type: "character_meet",
-        times: ["Park open to close"],
-        location: "Princess Fairytale Hall, Fantasyland",
+        times: ["9:00 AM - Park Close"],
+        location: "Fantasyland",
         characters: ["Cinderella", "Elena", "Tiana", "Rapunzel"],
         duration: 15,
         source: 'static'
       },
       {
         id: "town_square_theater_mickey",
-        name: "Mickey Mouse Meet & Greet", 
+        name: "Mickey Mouse Meet", 
         type: "character_meet",
-        times: ["Park open to close"],
-        location: "Town Square Theater, Main Street USA",
+        times: ["9:00 AM - Park Close"],
+        location: "Town Square Theater",
         characters: ["Mickey Mouse"],
         duration: 15,
         source: 'static'
@@ -732,18 +729,18 @@ function getStaticCharacterMeets(park) {
         id: "petes_silly_sideshow",
         name: "Pete's Silly Sideshow",
         type: "character_meet",
-        times: ["Park open to close"],
-        location: "Storybook Circus, Fantasyland",
-        characters: ["Goofy", "Donald Duck", "Minnie Mouse", "Daisy Duck"],
+        times: ["10:00 AM - 6:00 PM"],
+        location: "Storybook Circus",
+        characters: ["Goofy", "Donald", "Minnie", "Daisy"],
         duration: 15,
         source: 'static'
       },
       {
-        id: "tinker_bell_magical_nook",
-        name: "Tinker Bell Meet & Greet",
-        type: "character_meet", 
-        times: ["Park open to close"],
-        location: "Town Square Theater, Main Street USA",
+        id: "tinker_bell_nook",
+        name: "Tinker Bell's Magical Nook", 
+        type: "character_meet",
+        times: ["9:00 AM - 5:00 PM"],
+        location: "Main Street, USA",
         characters: ["Tinker Bell"],
         duration: 15,
         source: 'static'
@@ -752,169 +749,129 @@ function getStaticCharacterMeets(park) {
         id: "enchanted_tales_belle",
         name: "Enchanted Tales with Belle",
         type: "character_meet",
-        times: ["Check Times"],
-        location: "Enchanted Tales with Belle, Fantasyland",
-        characters: ["Belle", "Beast"],
+        times: ["10:00 AM - 8:00 PM"],
+        location: "Fantasyland",
+        characters: ["Belle"],
         duration: 20,
         source: 'static'
       }
     ],
     'epcot': [
       {
-        id: "character_spot_epcot",
-        name: "Character Meet at Main Entrance",
+        id: "epcot_character_spot",
+        name: "Character Spot",
         type: "character_meet",
-        times: ["Park open - early afternoon"],
-        location: "Main Entrance, Future World",
-        characters: ["Mickey Mouse", "Minnie Mouse", "Goofy"],
+        times: ["11:00 AM - 5:00 PM"],
+        location: "Future World",
+        characters: ["Mickey", "Minnie", "Goofy"],
         duration: 15,
         source: 'static'
       }
     ],
     'hollywood-studios': [
       {
-        id: "mickey_minnie_runaway_railway",
-        name: "Mickey & Minnie Meet",
+        id: "red_carpet_dreams",
+        name: "Red Carpet Dreams",
         type: "character_meet",
-        times: ["Park open to close"],
-        location: "Chinese Theater Courtyard",
-        characters: ["Mickey Mouse", "Minnie Mouse"],
+        times: ["9:30 AM - 7:00 PM"],
+        location: "Commissary Lane",
+        characters: ["Mickey", "Minnie"],
         duration: 15,
         source: 'static'
       }
     ],
     'animal-kingdom': [
       {
-        id: "character_meet_discovery_island",
-        name: "Character Meet at Discovery Island",
+        id: "adventure_outpost",
+        name: "Adventure Outpost",
         type: "character_meet",
-        times: ["Park open - early afternoon"],
+        times: ["10:00 AM - 4:30 PM"],
         location: "Discovery Island",
-        characters: ["Mickey Mouse", "Minnie Mouse"],
+        characters: ["Mickey", "Minnie"],
         duration: 15,
         source: 'static'
       }
     ]
   };
-  
   return characterMeets[park] || [];
 }
 
-// ========== FALLBACK DATA FUNCTIONS ==========
+// ========== FALLBACK DATA ==========
 function getFallbackWaitTimes(park) {
   const fallbacks = {
     'magic-kingdom': [
-      { id: 'mk-space-mountain', name: 'Space Mountain', land: 'Tomorrowland', waitTime: 45, isOpen: true, hasLightningLane: true },
-      { id: 'mk-pirates', name: 'Pirates of the Caribbean', land: 'Adventureland', waitTime: 25, isOpen: true, hasLightningLane: false },
-      { id: 'mk-haunted-mansion', name: 'Haunted Mansion', land: 'Liberty Square', waitTime: 30, isOpen: true, hasLightningLane: true }
+      { id: 'mk-space-mountain', name: 'Space Mountain', land: 'Tomorrowland', waitTime: 45, isOpen: true },
+      { id: 'mk-pirates', name: 'Pirates', land: 'Adventureland', waitTime: 25, isOpen: true }
     ],
     'epcot': [
-      { id: 'ep-guardians', name: 'Guardians of the Galaxy: Cosmic Rewind', land: 'Future World', waitTime: 85, isOpen: true, hasLightningLane: true },
-      { id: 'ep-test-track', name: 'Test Track', land: 'Future World', waitTime: 55, isOpen: true, hasLightningLane: true }
+      { id: 'ep-guardians', name: 'Guardians', land: 'Future World', waitTime: 85, isOpen: true }
     ],
     'hollywood-studios': [
-      { id: 'hs-rise', name: 'Star Wars: Rise of the Resistance', land: 'Star Wars: Galaxy\'s Edge', waitTime: 120, isOpen: true, hasLightningLane: true },
-      { id: 'hs-runaway-railway', name: 'Mickey & Minnie\'s Runaway Railway', land: 'Chinese Theater', waitTime: 45, isOpen: true, hasLightningLane: true }
+      { id: 'hs-rise', name: 'Rise of Resistance', land: 'Galaxy\'s Edge', waitTime: 120, isOpen: true }
     ],
     'animal-kingdom': [
-      { id: 'ak-avatar', name: 'Avatar Flight of Passage', land: 'Pandora', waitTime: 90, isOpen: true, hasLightningLane: true },
-      { id: 'ak-everest', name: 'Expedition Everest', land: 'Asia', waitTime: 25, isOpen: true, hasLightningLane: false }
+      { id: 'ak-avatar', name: 'Flight of Passage', land: 'Pandora', waitTime: 90, isOpen: true }
     ]
   };
-  
   return {
     park,
-    attractions: fallbacks[park] || fallbacks['magic-kingdom'],
-    source: 'fallback',
-    lastUpdated: new Date().toISOString(),
-    freshnessScore: 0
-  };
-}
-
-function getFallbackEntertainment(park) {
-  const fallbacks = {
-    'magic-kingdom': [
-      {
-        id: 'festival_of_fantasy',
-        name: 'Festival of Fantasy Parade',
-        type: 'parade',
-        times: ['3:00 PM'],
-        location: 'Frontierland → Main Street USA',
-        duration: 20,
-        source: 'fallback'
-      },
-      {
-        id: 'happily_ever_after',
-        name: 'Happily Ever After',
-        type: 'fireworks',
-        times: ['9:00 PM'],
-        location: 'Cinderella Castle',
-        duration: 18,
-        source: 'fallback'
-      }
-    ]
-  };
-  
-  return {
-    park,
-    entertainment: fallbacks[park] || [],
+    attractions: fallbacks[park] || [],
     source: 'fallback',
     lastUpdated: new Date().toISOString()
   };
 }
 
-// Placeholder functions for missing data endpoints
+function getFallbackEntertainment(park) {
+  return {
+    park,
+    entertainment: [
+      {
+        id: 'parade_fallback',
+        name: 'Parade',
+        type: 'parade',
+        times: ['3:00 PM'],
+        location: 'Main Street',
+        duration: 20,
+        source: 'fallback'
+      }
+    ],
+    source: 'fallback',
+    lastUpdated: new Date().toISOString()
+  };
+}
+
+// Placeholder functions
 async function fetchEntertainmentData(park, requestId) {
-  // Implementation would go here
   return null;
 }
 
-// ========== ENHANCED ERROR HANDLING MIDDLEWARE ==========
+// ========== ERROR HANDLING ==========
 app.use((err, req, res, next) => {
   console.error(`🚨 ${req.method} ${req.path}:`, {
     error: err.message,
-    stack: process.env.NODE_ENV === 'production' ? undefined : err.stack,
     referenceId: req.id,
     timestamp: new Date().toISOString()
   });
-
   res.status(500).json({
     error: 'Internal server error',
-    referenceId: req.id,
-    timestamp: new Date().toISOString()
+    referenceId: req.id
   });
 });
 
-// ========== GLOBAL ERROR HANDLERS (DeepSeek Critical Addition) ==========
 process.on('uncaughtException', (err) => {
-  console.error('🚨 Uncaught Exception:', {
-    error: err.message,
-    stack: err.stack,
-    timestamp: new Date().toISOString()
-  });
-  // In production, consider graceful shutdown
+  console.error('🚨 Uncaught Exception:', err);
   process.exit(1);
 });
 
 process.on('unhandledRejection', (err) => {
-  console.error('🚨 Unhandled Rejection:', {
-    error: err.message,
-    stack: err.stack,
-    timestamp: new Date().toISOString()
-  });
+  console.error('🚨 Unhandled Rejection:', err);
 });
 
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
-  console.log(`🏰 Enhanced Disney Data Proxy Server running on port ${PORT}`);
-  console.log(`📊 Cache system initialized with TTLs:`);
-  console.log(`   - Wait Times: ${CACHE_TTL_WAIT_TIMES}s`);
-  console.log(`   - Entertainment: ${CACHE_TTL_ENTERTAINMENT}s`);
-  console.log(`   - Park Hours: ${CACHE_TTL_PARK_HOURS}s`);
-  console.log(`🛡️ Security and rate limiting enabled`);
+  console.log(`🏰 Disney Data Proxy Server running on port ${PORT}`);
+  console.log(`📊 Cache TTLs: WT:${CACHE_TTL_WAIT_TIMES}s, ENT:${CACHE_TTL_ENTERTAINMENT}s`);
+  console.log(`🛡️ Security enabled`);
   console.log(`⚡ Circuit breakers active`);
-  console.log(`🔍 Request tracking enabled`);
-  console.log(`📡 Enhanced endpoints ready!`);
 });
