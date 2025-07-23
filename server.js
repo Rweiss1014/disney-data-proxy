@@ -1,4 +1,4 @@
-// Production-Ready Disney Data Proxy Server v3.0
+// Production-Ready Disney Data Proxy Server v3.1 - With Live Park Hours
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -23,7 +23,9 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'"]
     }
   },
-  hsts: { maxAge: 31536000, includeSubDomains: true }
+  hsts: { maxAge: 31536000, includeSubDomains: true },
+  expectCt: { maxAge: 86400 },
+  referrerPolicy: { policy: 'same-origin' }
 }));
 
 app.use(express.json({ limit: '10mb' }));
@@ -40,15 +42,15 @@ app.use((req, res, next) => {
 app.use(cors({
   origin: [
     'http://localhost:8081',
-    'https://your-pixie-pal-app.vercel.app',
+    'https://pixiepal-app.vercel.app', // Updated to actual domain
     /^https:\/\/.*\.vercel\.app$/,
     /^exp:\/\/.*/, // Expo development
     /^https:\/\/.*\.netlify\.app$/,
-    'https://your-production-domain.com'
+    'https://pixiepal.app' // Updated to actual domain
   ],
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Data-Freshness'] // Added freshness header
 }));
 
 // ========== ENHANCED CACHING SYSTEM ==========
@@ -63,7 +65,7 @@ const caches = {
   waitTimes: new NodeCache({ stdTTL: CACHE_TTL_WAIT_TIMES, checkperiod: 60 })
 };
 
-// Data freshness tracking (DeepSeek suggestion)
+// Data freshness tracking
 const dataState = {
   lastSuccessfulFetch: {
     parkHours: null,
@@ -211,8 +213,8 @@ waitTimesBreaker.fallback(async (park, requestId) => {
 // Welcome endpoint with system status
 app.get('/', (req, res) => {
   res.json({
-    message: '🏰 Disney Data Proxy Server - Production Ready',
-    version: '3.0.0',
+    message: '🏰 Disney Data Proxy Server - Production Ready v3.1',
+    version: '3.1.0',
     status: 'active',
     requestId: req.id,
     endpoints: [
@@ -233,7 +235,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// ========== PARK HOURS ENDPOINT (FIXED) ==========
+// ========== LIVE PARK HOURS ENDPOINT ==========
 app.get('/api/disney/park-hours/:park', validatePark, async (req, res) => {
   const park = req.park;
   const cacheKey = `park_hours_${park}`;
@@ -243,6 +245,7 @@ app.get('/api/disney/park-hours/:park', validatePark, async (req, res) => {
     const cached = caches.parkHours.get(cacheKey);
     if (cached) {
       console.log(`💾 Cache hit for park hours: ${park} - Request ID: ${req.id}`);
+      res.setHeader('X-Data-Freshness', 'cached');
       return res.json({ 
         ...cached, 
         fromCache: true,
@@ -250,71 +253,51 @@ app.get('/api/disney/park-hours/:park', validatePark, async (req, res) => {
       });
     }
 
-    console.log(`🕐 Fetching park hours for ${park} - Request ID: ${req.id}`);
+    console.log(`🕐 Fetching LIVE park hours for ${park} - Request ID: ${req.id}`);
     
-    // Static park hours (would be replaced with real data source in production)
-    const parkHoursData = {
-      'magic-kingdom': {
-        date: new Date().toISOString().split('T')[0],
-        openingTime: '09:00',
-        closingTime: '23:00',
-        type: 'Operating',
-        park: 'Magic Kingdom',
-        specialHours: null,
-        lastUpdated: new Date().toISOString()
-      },
-      'epcot': {
-        date: new Date().toISOString().split('T')[0],
-        openingTime: '09:00',
-        closingTime: '21:00',
-        type: 'Operating',
-        park: 'EPCOT',
-        specialHours: null,
-        lastUpdated: new Date().toISOString()
-      },
-      'hollywood-studios': {
-        date: new Date().toISOString().split('T')[0],
-        openingTime: '09:00',
-        closingTime: '21:00',
-        type: 'Operating',
-        park: 'Hollywood Studios',
-        specialHours: null,
-        lastUpdated: new Date().toISOString()
-      },
-      'animal-kingdom': {
-        date: new Date().toISOString().split('T')[0],
-        openingTime: '08:00',
-        closingTime: '20:00',
-        type: 'Operating',
-        park: 'Animal Kingdom',
-        specialHours: null,
-        lastUpdated: new Date().toISOString()
-      }
-    };
+    // Try to get live park hours data
+    const liveHoursData = await fetchLiveParkHours(park, req.id);
     
-    const hoursData = parkHoursData[park] || parkHoursData['magic-kingdom'];
-    
-    // Cache the result
-    caches.parkHours.set(cacheKey, hoursData);
-    dataState.lastSuccessfulFetch.parkHours = new Date();
-    
-    res.json({ 
-      ...hoursData,
-      fromCache: false,
-      requestId: req.id
-    });
+    if (liveHoursData) {
+      // Cache the live data
+      caches.parkHours.set(cacheKey, liveHoursData);
+      dataState.lastSuccessfulFetch.parkHours = new Date();
+      
+      // Calculate freshness
+      const minutesSinceUpdate = Math.floor(
+        (new Date() - dataState.lastSuccessfulFetch.parkHours) / 60000
+      );
+      res.setHeader('X-Data-Freshness', `${minutesSinceUpdate}min`);
+      
+      console.log(`✅ Got LIVE park hours for ${park} - Request ID: ${req.id}`);
+      res.json({ 
+        ...liveHoursData,
+        fromCache: false,
+        requestId: req.id
+      });
+    } else {
+      // Fallback to static data if live fails
+      console.log(`⚠️ Live park hours failed, using fallback for ${park} - Request ID: ${req.id}`);
+      const fallbackHours = getStaticParkHours(park);
+      res.setHeader('X-Data-Freshness', 'fallback');
+      res.json({ 
+        ...fallbackHours,
+        source: 'fallback',
+        fromCache: false,
+        requestId: req.id
+      });
+    }
     
   } catch (error) {
     console.error(`❌ Park hours error for ${park}: ${error.message} - Request ID: ${req.id}`);
+    const fallback = getStaticParkHours(park);
+    res.setHeader('X-Data-Freshness', 'error');
     res.status(500).json({
       error: 'Failed to fetch park hours',
       referenceId: req.id,
       fallback: {
-        date: new Date().toISOString().split('T')[0],
-        openingTime: '09:00',
-        closingTime: '21:00',
-        type: 'Operating',
-        park: park
+        ...fallback,
+        requestId: req.id
       }
     });
   }
@@ -330,6 +313,7 @@ app.get('/api/disney/wait-times/:park?', validatePark, async (req, res) => {
     if (cached) {
       console.log(`💾 Cache hit for wait times: ${park} - Request ID: ${req.id}`);
       res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=60');
+      res.setHeader('X-Data-Freshness', 'cached');
       return res.json({ 
         ...cached, 
         fromCache: true,
@@ -343,6 +327,13 @@ app.get('/api/disney/wait-times/:park?', validatePark, async (req, res) => {
     if (waitTimesData) {
       caches.waitTimes.set(cacheKey, waitTimesData);
       res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=60');
+      
+      // Calculate freshness
+      const minutesSinceUpdate = Math.floor(
+        (new Date() - new Date(waitTimesData.lastUpdated)) / 60000
+      );
+      res.setHeader('X-Data-Freshness', `${minutesSinceUpdate}min`);
+      
       res.json({ 
         ...waitTimesData, 
         fromCache: false,
@@ -355,6 +346,7 @@ app.get('/api/disney/wait-times/:park?', validatePark, async (req, res) => {
   } catch (error) {
     console.error(`❌ Wait times error for ${park}: ${error.message} - Request ID: ${req.id}`);
     const fallback = getFallbackWaitTimes(park);
+    res.setHeader('X-Data-Freshness', 'error');
     res.status(500).json({
       error: 'Failed to fetch wait times',
       fallback,
@@ -364,7 +356,7 @@ app.get('/api/disney/wait-times/:park?', validatePark, async (req, res) => {
   }
 });
 
-// ========== ENTERTAINMENT ENDPOINT (ENHANCED FOR OPENAI) ==========
+// ========== ENTERTAINMENT ENDPOINT (ENHANCED) ==========
 app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
   const park = req.park;
   const cacheKey = `entertainment_${park}`;
@@ -373,6 +365,7 @@ app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
     const cached = caches.entertainment.get(cacheKey);
     if (cached) {
       console.log(`💾 Cache hit for entertainment: ${park} - Request ID: ${req.id}`);
+      res.setHeader('X-Data-Freshness', 'cached');
       return res.json({ 
         ...cached, 
         fromCache: true,
@@ -406,12 +399,16 @@ app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
       allEntertainment.push(...characterData.characters);
     }
     
-    if (allEntertainment.length === 0) {
-      allEntertainment = getFallbackEntertainment(park).entertainment;
+    // Deduplicate entries
+    const uniqueEntertainment = [...new Map(allEntertainment.map(item => 
+      [item.id, item])).values()];
+    
+    if (uniqueEntertainment.length === 0) {
+      uniqueEntertainment.push(...getFallbackEntertainment(park).entertainment);
     }
     
     // FORMAT FOR OPENAI CONTEXT
-    const characterMeetData = allEntertainment
+    const characterMeetData = uniqueEntertainment
       .filter(item => item.type === 'character_meet')
       .map(meet => ({
         id: meet.id,
@@ -425,14 +422,14 @@ app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
     
     const result = {
       park,
-      entertainment: allEntertainment,
-      characterMeets: characterMeetData, // Special OpenAI-friendly format
+      entertainment: uniqueEntertainment,
+      characterMeets: characterMeetData,
       sources: {
         base: baseEntertainment?.source || 'fallback',
         characters: characterData?.characters?.length > 0 ? 'theme_park_iq' : 'static',
         staticCount: staticCharacterMeets.length
       },
-      totalItems: allEntertainment.length,
+      totalItems: uniqueEntertainment.length,
       lastUpdated: new Date().toISOString(),
       requestId: req.id
     };
@@ -440,15 +437,82 @@ app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
     caches.entertainment.set(cacheKey, result);
     dataState.lastSuccessfulFetch.entertainment = new Date();
     
+    // Calculate freshness
+    const minutesSinceUpdate = Math.floor(
+      (new Date() - dataState.lastSuccessfulFetch.entertainment) / 60000
+    );
+    res.setHeader('X-Data-Freshness', `${minutesSinceUpdate}min`);
+    
     res.json(result);
     
   } catch (error) {
     console.error(`❌ Entertainment error for ${park}: ${error.message} - Request ID: ${req.id}`);
     const fallback = getFallbackEntertainment(park);
+    res.setHeader('X-Data-Freshness', 'error');
     res.status(500).json({
       error: 'Failed to fetch entertainment data',
       fallback,
       referenceId: req.id
+    });
+  }
+});
+
+// 🧚‍♀️ CHARACTER MEETS ENDPOINT - WITH LIVE DATA
+app.get('/api/disney/character-meets/:park', validatePark, async (req, res) => {
+  const park = req.park;
+  
+  console.log(`🧚‍♀️ Fetching character meets for ${park} - Request ID: ${req.id}`);
+
+  try {
+    // Get static character meet data
+    const staticCharacterMeets = getStaticCharacterMeets(park);
+    
+    // Try to get live character data
+    let liveCharacters = [];
+    try {
+      const scrapedData = await scrapeThemeParkIQCharacters(park, req.id);
+      liveCharacters = scrapedData.characters || [];
+    } catch (error) {
+      console.log(`⚠️ Live character scrape failed: ${error.message} - Request ID: ${req.id}`);
+    }
+    
+    // Combine static and live data
+    const combinedCharacters = [...staticCharacterMeets, ...liveCharacters];
+    
+    // Deduplicate characters
+    const uniqueCharacters = [...new Map(combinedCharacters.map(item => 
+      [item.id, item])).values()];
+    
+    const response = {
+      requestId: req.id,
+      park,
+      characterMeets: uniqueCharacters,
+      sources: {
+        static: staticCharacterMeets.length,
+        live: liveCharacters.length,
+        total: uniqueCharacters.length
+      },
+      timestamp: new Date().toISOString(),
+      fromCache: false
+    };
+
+    console.log(`✅ Returning ${uniqueCharacters.length} character meets for ${park} - Request ID: ${req.id}`);
+    
+    // Calculate freshness
+    const minutesSinceUpdate = Math.floor(
+      (new Date() - new Date(response.timestamp)) / 60000
+    );
+    res.setHeader('X-Data-Freshness', `${minutesSinceUpdate}min`);
+    
+    res.json(response);
+
+  } catch (error) {
+    console.error(`❌ Character meets error for ${park}: ${error.message} - Request ID: ${req.id}`);
+    res.setHeader('X-Data-Freshness', 'error');
+    res.status(500).json({ 
+      error: 'Failed to fetch character meets',
+      requestId: req.id,
+      fallback: getStaticCharacterMeets(park)
     });
   }
 });
@@ -579,13 +643,17 @@ async function scrapeThemeParkIQCharacters(park, requestId) {
   try {
     console.log(`🧚‍♀️ Starting ThemeParkIQ scrape for ${park} - Request ID: ${requestId}`);
     
-    // Network reachability check
-    try {
-      await axios.head('https://www.themeparkiq.com', { timeout: 5000 });
-      console.log(`✅ ThemeParkIQ site reachable - Request ID: ${requestId}`);
-    } catch (headError) {
-      throw new Error(`Site unreachable: ${headError.message}`);
-    }
+    // Use rotating proxies in production
+    const proxyConfig = process.env.NODE_ENV === 'production' ? {
+      proxy: {
+        host: 'proxy.example.com',
+        port: 8080,
+        auth: {
+          username: 'user',
+          password: 'pass'
+        }
+      }
+    } : {};
 
     // Make request with enhanced headers
     const response = await axios.get(
@@ -599,6 +667,7 @@ async function scrapeThemeParkIQCharacters(park, requestId) {
           'Referer': 'https://www.google.com/',
           'DNT': '1'
         },
+        ...proxyConfig,
         validateStatus: () => true
       }
     );
@@ -685,6 +754,53 @@ function parseWaitTimesData(data, park) {
   return attractions;
 }
 
+// ========== LIVE PARK HOURS FUNCTIONS ==========
+async function fetchLiveParkHours(park, requestId) {
+  const parkId = getParkId(park);
+  const url = `https://queue-times.com/parks/${parkId}/calendar.json`;
+  
+  try {
+    console.log(`🌐 Fetching live park hours from Queue-Times for ${park} - Request ID: ${requestId}`);
+    
+    const response = await axios.get(url, {
+      timeout: 5000,
+      headers: {
+        'User-Agent': 'PixiePal Disney Companion App/2.0 (+https://pixiepal.app)',
+        'Accept': 'application/json'
+      }
+    });
+    
+    if (response.data && response.data.length > 0) {
+      console.log(`✅ Received live park hours for ${park} - Request ID: ${requestId}`);
+      return parseHoursData(response.data, park);
+    }
+    throw new Error('Empty response from Queue-Times');
+    
+  } catch (error) {
+    console.error(`❌ Queue-Times fetch failed: ${error.message} - Request ID: ${requestId}`);
+    return null;
+  }
+}
+
+function parseHoursData(data, park) {
+  // Extract next 7 days of hours
+  const hours = data.slice(0, 7).map(day => ({
+    date: day.date,
+    openingTime: day.opening_time,
+    closingTime: day.closing_time,
+    type: day.type || 'Operating',
+    specialHours: day.special ? 'Special Hours' : null
+  }));
+  
+  return {
+    park,
+    hours,
+    source: 'queue_times',
+    dataQuality: 'live',
+    lastUpdated: new Date().toISOString()
+  };
+}
+
 function getSourceName(url) {
   if (url.includes('touringplans')) return 'touringplans';
   if (url.includes('queue-times')) return 'queue_times';
@@ -699,6 +815,24 @@ function getParkId(park) {
     'animal-kingdom': 8
   };
   return ids[park] || 6;
+}
+
+// ========== STATIC PARK HOURS (FALLBACK) ==========
+function getStaticParkHours(park) {
+  return {
+    park,
+    hours: [
+      {
+        date: new Date().toISOString().split('T')[0],
+        openingTime: park === 'animal-kingdom' ? '08:00' : '09:00',
+        closingTime: park === 'magic-kingdom' ? '23:00' : '21:00',
+        type: 'Operating',
+        specialHours: null
+      }
+    ],
+    source: 'fallback',
+    lastUpdated: new Date().toISOString()
+  };
 }
 
 // ========== STATIC CHARACTER DATA ==========
@@ -840,8 +974,9 @@ function getFallbackEntertainment(park) {
   };
 }
 
-// Placeholder functions
+// Placeholder function - would be implemented with real data source
 async function fetchEntertainmentData(park, requestId) {
+  // This would be replaced with actual entertainment API integration
   return null;
 }
 
@@ -870,8 +1005,9 @@ process.on('unhandledRejection', (err) => {
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🏰 Disney Data Proxy Server running on port ${PORT}`);
+  console.log(`🏰 Disney Data Proxy Server v3.1 running on port ${PORT}`);
   console.log(`📊 Cache TTLs: WT:${CACHE_TTL_WAIT_TIMES}s, ENT:${CACHE_TTL_ENTERTAINMENT}s`);
   console.log(`🛡️ Security enabled`);
   console.log(`⚡ Circuit breakers active`);
+  console.log(`🌐 Live park hours enabled via Queue-Times API`);
 });
