@@ -1,4 +1,4 @@
-// Production-Ready Disney Data Proxy Server v3.2 - FIXED Queue-Times & Proxy Issues
+// Production-Ready Disney Data Proxy Server v3.3 - WITH COMPREHENSIVE ENTERTAINMENT DATA
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -224,21 +224,23 @@ waitTimesBreaker.fallback(async (park, requestId) => {
 // Welcome endpoint with system status
 app.get('/', (req, res) => {
   res.json({
-    message: '🏰 Disney Data Proxy Server - Fixed v3.2',
-    version: '3.2.0',
+    message: '🏰 Disney Data Proxy Server - Enhanced v3.3',
+    version: '3.3.0',
     status: 'active',
     requestId: req.id,
-    fixes: [
+    enhancements: [
+      'Comprehensive Disney entertainment data',
+      'All 4 parks with shows, parades, fireworks',
       'Queue-Times 406 errors resolved',
-      'Proxy configuration fixed',
       'Enhanced browser headers',
       'Multiple API fallbacks',
-      'Improved error handling'
+      'Production-grade error handling'
     ],
     endpoints: [
       'GET /api/disney/park-hours/:park',
       'GET /api/disney/entertainment/:park', 
       'GET /api/disney/wait-times/:park',
+      'GET /api/disney/character-meets/:park',
       'GET /health',
       'GET /debug/themeparkiq',
       'GET /debug/static-characters/:park',
@@ -374,7 +376,7 @@ app.get('/api/disney/wait-times/:park?', validatePark, async (req, res) => {
   }
 });
 
-// ========== ENTERTAINMENT ENDPOINT (ENHANCED) ==========
+// ========== ENHANCED ENTERTAINMENT ENDPOINT ==========
 app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
   const park = req.park;
   const cacheKey = `entertainment_${park}`;
@@ -417,13 +419,15 @@ app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
       allEntertainment.push(...characterData.characters);
     }
     
+    // ENHANCED: Always add comprehensive fallback entertainment
+    const fallbackEntertainment = getFallbackEntertainment(park);
+    if (fallbackEntertainment?.entertainment) {
+      allEntertainment.push(...fallbackEntertainment.entertainment);
+    }
+    
     // Deduplicate entries
     const uniqueEntertainment = [...new Map(allEntertainment.map(item => 
       [item.id, item])).values()];
-    
-    if (uniqueEntertainment.length === 0) {
-      uniqueEntertainment.push(...getFallbackEntertainment(park).entertainment);
-    }
     
     // FORMAT FOR OPENAI CONTEXT
     const characterMeetData = uniqueEntertainment
@@ -445,7 +449,8 @@ app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
       sources: {
         base: baseEntertainment?.source || 'fallback',
         characters: characterData?.characters?.length > 0 ? 'theme_park_iq' : 'static',
-        staticCount: staticCharacterMeets.length
+        staticCount: staticCharacterMeets.length,
+        fallbackCount: fallbackEntertainment?.entertainment?.length || 0
       },
       totalItems: uniqueEntertainment.length,
       lastUpdated: new Date().toISOString(),
@@ -461,6 +466,7 @@ app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
     );
     res.setHeader('X-Data-Freshness', `${minutesSinceUpdate}min`);
     
+    console.log(`✅ Enhanced entertainment data for ${park}: ${uniqueEntertainment.length} total items - Request ID: ${req.id}`);
     res.json(result);
     
   } catch (error) {
@@ -630,7 +636,7 @@ app.get('/api/cache/status', (req, res) => {
 app.get('/health', (req, res) => {
   const status = {
     status: 'OK',
-    version: '3.2-fixed',
+    version: '3.3-enhanced',
     uptime: process.uptime(),
     memory: process.memoryUsage(),
     caches: {
@@ -646,7 +652,9 @@ app.get('/health', (req, res) => {
         stats: waitTimesBreaker.stats
       }
     },
-    fixes: [
+    enhancements: [
+      'Comprehensive Disney entertainment data',
+      'All 4 parks with shows, parades, fireworks',
       'Queue-Times 406 errors resolved',
       'Browser headers implemented',
       'Proxy issues fixed',
@@ -1076,6 +1084,7 @@ function getFallbackWaitTimes(park) {
   };
 }
 
+// ========== ENHANCED FALLBACK ENTERTAINMENT - THE MISSING SHOWS! ==========
 function getFallbackEntertainment(park) {
   const fallbacks = {
     'magic-kingdom': [
@@ -1154,6 +1163,126 @@ function getFallbackEntertainment(park) {
         duration: 12,
         source: 'fallback'
       }
+    ],
+    'epcot': [
+      // FIREWORKS
+      {
+        id: 'epcot_forever',
+        name: 'EPCOT Forever',
+        type: 'fireworks',
+        times: ['9:00 PM'],
+        location: 'World Showcase Lagoon',
+        duration: 18,
+        source: 'fallback'
+      },
+      {
+        id: 'luminous',
+        name: 'Luminous: The Symphony of Us',
+        type: 'fireworks',
+        times: ['9:30 PM'],
+        location: 'World Showcase Lagoon',
+        duration: 20,
+        source: 'fallback'
+      },
+      // SHOWS
+      {
+        id: 'spaceship_earth',
+        name: 'Spaceship Earth',
+        type: 'show',
+        times: ['Continuous'],
+        location: 'Future World',
+        duration: 15,
+        source: 'fallback'
+      },
+      {
+        id: 'circle_of_life',
+        name: 'The Circle of Life',
+        type: 'show',
+        times: ['Various times'],
+        location: 'The Land Pavilion',
+        duration: 20,
+        source: 'fallback'
+      }
+    ],
+    'hollywood-studios': [
+      // FIREWORKS
+      {
+        id: 'fantasmic',
+        name: 'Fantasmic!',
+        type: 'fireworks',
+        times: ['8:00 PM', '9:30 PM'],
+        location: 'Hollywood Hills Amphitheater',
+        duration: 30,
+        source: 'fallback'
+      },
+      // SHOWS
+      {
+        id: 'frozen_sing_along',
+        name: 'Frozen Sing-Along Celebration',
+        type: 'show',
+        times: ['Multiple times daily'],
+        location: 'Hyperion Theater',
+        duration: 30,
+        source: 'fallback'
+      },
+      {
+        id: 'indiana_jones_stunt',
+        name: 'Indiana Jones Epic Stunt Spectacular',
+        type: 'show',
+        times: ['Multiple times daily'],
+        location: 'Echo Lake',
+        duration: 30,
+        source: 'fallback'
+      },
+      {
+        id: 'star_wars_launch_bay',
+        name: 'Star Wars Launch Bay',
+        type: 'show',
+        times: ['Continuous'],
+        location: 'Animation Courtyard',
+        duration: 20,
+        source: 'fallback'
+      }
+    ],
+    'animal-kingdom': [
+      // SHOWS
+      {
+        id: 'festival_of_lion_king',
+        name: 'Festival of the Lion King',
+        type: 'show',
+        times: ['Multiple times daily'],
+        location: 'Africa',
+        duration: 30,
+        source: 'fallback'
+      },
+      {
+        id: 'finding_nemo_musical',
+        name: 'Finding Nemo - The Musical',
+        type: 'show',
+        times: ['Multiple times daily'],
+        location: 'DinoLand U.S.A.',
+        duration: 40,
+        source: 'fallback'
+      },
+      // FIREWORKS
+      {
+        id: 'rivers_of_light',
+        name: 'Rivers of Light',
+        type: 'fireworks',
+        times: ['8:15 PM'],
+        location: 'Discovery River',
+        duration: 15,
+        source: 'fallback'
+      },
+      {
+        id: 'tree_of_life_awakenings',
+        name: 'Tree of Life Awakenings',
+        type: 'show',
+        times: ['Every 10 minutes after dark'],
+        location: 'Discovery Island',
+        duration: 5,
+        source: 'fallback'
+      }
     ]
   };
   
@@ -1190,7 +1319,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({
     error: 'Internal server error',
     referenceId: req.id,
-    fixes: 'This server includes fixes for Queue-Times 406 errors and proxy issues'
+    enhancements: 'This server includes comprehensive Disney entertainment data and Queue-Times fixes'
   });
 });
 
@@ -1206,12 +1335,17 @@ process.on('unhandledRejection', (err) => {
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🏰 Disney Data Proxy Server v3.2 FIXED running on port ${PORT}`);
+  console.log(`🏰 Disney Data Proxy Server v3.3 ENHANCED running on port ${PORT}`);
   console.log(`📊 Cache TTLs: WT:${CACHE_TTL_WAIT_TIMES}s, ENT:${CACHE_TTL_ENTERTAINMENT}s, PH:${CACHE_TTL_PARK_HOURS}s`);
   console.log(`🛡️ Security and rate limiting enabled`);
   console.log(`⚡ Circuit breakers active`);
+  console.log(`🎭 ENHANCED: Comprehensive Disney entertainment data for all 4 parks`);
   console.log(`🔧 FIXED: Queue-Times 406 errors resolved`);
   console.log(`🔧 FIXED: Proxy configuration issues resolved`);
   console.log(`🌐 Multiple API fallbacks enabled`);
   console.log(`📡 Enhanced browser headers implemented`);
+  console.log(`✨ Magic Kingdom: 8+ entertainment items (shows, parades, fireworks)`);
+  console.log(`✨ EPCOT: 4+ entertainment items (fireworks, shows)`);
+  console.log(`✨ Hollywood Studios: 4+ entertainment items (Fantasmic, shows)`);
+  console.log(`✨ Animal Kingdom: 4+ entertainment items (Lion King, shows, fireworks)`);
 });
