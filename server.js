@@ -1079,22 +1079,79 @@ function getFallbackWaitTimes(park) {
 function getFallbackEntertainment(park) {
   const fallbacks = {
     'magic-kingdom': [
+      // FIREWORKS
       {
-        id: 'parade_fallback',
+        id: 'happily_ever_after',
+        name: 'Happily Ever After',
+        type: 'fireworks',
+        times: ['9:00 PM'],
+        location: 'Central Plaza (Cinderella Castle)',
+        duration: 20,
+        source: 'fallback'
+      },
+      // PARADES
+      {
+        id: 'festival_of_fantasy',
         name: 'Festival of Fantasy Parade',
         type: 'parade',
         times: ['3:00 PM'],
-        location: 'Main Street USA',
+        location: 'Frontierland → Main Street USA',
+        duration: 20,
+        source: 'fallback'
+      },
+      // SHOWS - THE MISSING ENTERTAINMENT!
+      {
+        id: 'country_bear_jamboree',
+        name: 'Country Bear Jamboree',
+        type: 'show',
+        times: ['10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM', '6:00 PM', '7:00 PM'],
+        location: 'Frontierland',
+        duration: 15,
+        source: 'fallback'
+      },
+      {
+        id: 'monsters_inc_laugh_floor',
+        name: 'Monsters Inc. Laugh Floor',
+        type: 'show',
+        times: ['9:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '1:00 PM', '2:00 PM', '3:00 PM', '4:00 PM', '5:00 PM', '6:00 PM', '7:00 PM', '8:00 PM'],
+        location: 'Tomorrowland',
+        duration: 15,
+        source: 'fallback'
+      },
+      {
+        id: 'carousel_of_progress',
+        name: 'Carousel of Progress',
+        type: 'show',
+        times: ['Continuous'],
+        location: 'Tomorrowland',
         duration: 20,
         source: 'fallback'
       },
       {
-        id: 'fireworks_fallback',
-        name: 'Happily Ever After',
-        type: 'fireworks',
-        times: ['9:00 PM'],
-        location: 'Main Street USA',
-        duration: 18,
+        id: 'tiki_room',
+        name: 'Walt Disney\'s Enchanted Tiki Room',
+        type: 'show',
+        times: ['Every 15 minutes'],
+        location: 'Adventureland',
+        duration: 15,
+        source: 'fallback'
+      },
+      {
+        id: 'hall_of_presidents',
+        name: 'The Hall of Presidents',
+        type: 'show',
+        times: ['Every 30 minutes'],
+        location: 'Liberty Square',
+        duration: 25,
+        source: 'fallback'
+      },
+      {
+        id: 'philharmagic',
+        name: 'Mickey\'s PhilharMagic',
+        type: 'show',
+        times: ['Continuous'],
+        location: 'Fantasyland',
+        duration: 12,
         source: 'fallback'
       }
     ]
