@@ -8,7 +8,8 @@ const helmet = require('helmet');
 const cheerio = require('cheerio');
 const CircuitBreaker = require('opossum');
 const { v4: uuidv4 } = require('uuid');
-
+const admin = require('firebase-admin');
+require('dotenv').config();
 const app = express();
 
 // ========== ENHANCED SECURITY & MIDDLEWARE ==========
@@ -52,7 +53,40 @@ app.use(cors({
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Data-Freshness']
 }));
+// ========== FIREBASE INITIALIZATION ==========
+// Initialize Firebase Admin (for sending push notifications)
+let firebaseInitialized = false;
+try {
+  if (process.env.FIREBASE_PRIVATE_KEY && !admin.apps.length) {
+    const serviceAccount = {
+      type: "service_account",
+      project_id: "pixie-pal-notifications",
+      private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+      private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      client_email: process.env.FIREBASE_CLIENT_EMAIL,
+      client_id: process.env.FIREBASE_CLIENT_ID,
+      auth_uri: "https://accounts.google.com/o/oauth2/auth",
+      token_uri: "https://oauth2.googleapis.com/token",
+      auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs"
+    };
 
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+    
+    firebaseInitialized = true;
+    console.log('🔥 Firebase Admin initialized for push notifications');
+  } else {
+    console.log('⚠️ Firebase Admin not initialized - missing environment variables');
+  }
+} catch (error) {
+  console.error('❌ Firebase Admin initialization failed:', error.message);
+}
+
+// In-memory storage for notification system
+const userWatchlists = new Map();
+const userTokens = new Map();
+const notificationHistory = new Map();
 // ========== ENHANCED CACHING SYSTEM ==========
 const CACHE_TTL_PARK_HOURS = process.env.CACHE_TTL_PARK_HOURS || 3600; // 1 hour
 const CACHE_TTL_ENTERTAINMENT = process.env.CACHE_TTL_ENTERTAINMENT || 1800; // 30 minutes  
@@ -218,7 +252,144 @@ waitTimesBreaker.fallback(async (park, requestId) => {
   console.log(`🔧 Circuit breaker fallback for ${park} - Request ID: ${requestId}`);
   return getFallbackWaitTimes(park);
 });
+// ========== NOTIFICATION ENDPOINTS ==========
 
+// Register device for notifications
+app.post('/api/notifications/register', (req, res) => {
+  const { token, userId = 'user_123', preferences = {} } = req.body;
+  
+  if (!token) {
+    return res.status(400).json({
+      error: 'FCM token is required',
+      referenceId: req.id
+    });
+  }
+  
+  userTokens.set(userId, {
+    token,
+    preferences: {
+      maxPerDay: preferences.maxPerDay || 6,
+      quietHours: preferences.quietHours || { start: '22:00', end: '08:00' },
+      ...preferences
+    },
+    registeredAt: new Date(),
+    lastActive: new Date()
+  });
+  
+  console.log(`🔔 Registered device for user ${userId} - Request ID: ${req.id}`);
+  res.json({ 
+    success: true, 
+    message: 'Device registered for notifications',
+    userId,
+    requestId: req.id
+  });
+});
+
+// Add ride to watchlist
+app.post('/api/notifications/watchlist', (req, res) => {
+  const { userId = 'user_123', rideName, threshold = 30, parkId } = req.body;
+  
+  if (!rideName) {
+    return res.status(400).json({
+      error: 'rideName is required',
+      referenceId: req.id
+    });
+  }
+  
+  if (!userWatchlists.has(userId)) {
+    userWatchlists.set(userId, []);
+  }
+  
+  const watchlist = userWatchlists.get(userId);
+  const filteredWatchlist = watchlist.filter(item => item.rideName !== rideName);
+  
+  const newWatchItem = {
+    rideName,
+    threshold: parseInt(threshold),
+    parkId: parkId || 'magic-kingdom',
+    addedAt: new Date(),
+    lastNotified: null,
+    notificationCount: 0
+  };
+  
+  filteredWatchlist.push(newWatchItem);
+  userWatchlists.set(userId, filteredWatchlist);
+  
+  console.log(`👀 Added ${rideName} (threshold: ${threshold}min) to watchlist for ${userId} - Request ID: ${req.id}`);
+  
+  res.json({ 
+    success: true, 
+    message: `Will notify when ${rideName} drops below ${threshold} minutes`,
+    watchItem: newWatchItem,
+    totalWatching: filteredWatchlist.length,
+    requestId: req.id
+  });
+});
+
+// Get user's watchlist
+app.get('/api/notifications/watchlist/:userId?', (req, res) => {
+  const userId = req.params.userId || 'user_123';
+  const watchlist = userWatchlists.get(userId) || [];
+  
+  res.json({ 
+    userId,
+    watchlist,
+    totalWatching: watchlist.length,
+    requestId: req.id
+  });
+});
+
+// Test notification endpoint
+app.post('/api/notifications/test', async (req, res) => {
+  const { userId = 'user_123', message } = req.body;
+  
+  if (!firebaseInitialized) {
+    return res.status(503).json({
+      error: 'Firebase not initialized - missing environment variables',
+      referenceId: req.id
+    });
+  }
+  
+  const userToken = userTokens.get(userId);
+  if (!userToken) {
+    return res.status(404).json({
+      error: 'User not registered for notifications',
+      referenceId: req.id
+    });
+  }
+  
+  try {
+    const message = {
+      token: userToken.token,
+      notification: {
+        title: '🧚‍♀️ Pixie Pal Test',
+        body: req.body.message || 'Test notification is working perfectly!'
+      },
+      data: { 
+        type: 'test',
+        userId,
+        timestamp: new Date().toISOString()
+      }
+    };
+
+    const response = await admin.messaging().send(message);
+    console.log(`✅ Test notification sent: ${response} - Request ID: ${req.id}`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Test notification sent!',
+      requestId: req.id
+    });
+    
+  } catch (error) {
+    console.error(`❌ Test notification failed: ${error.message} - Request ID: ${req.id}`);
+    res.status(500).json({
+      error: 'Failed to send test notification',
+      details: error.message,
+      referenceId: req.id
+    });
+  }
+});
 // ========== ENDPOINTS ==========
 
 // Welcome endpoint with system status
