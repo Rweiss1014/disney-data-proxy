@@ -1138,9 +1138,11 @@ rawData.liveData.forEach(item => {
 
     // Determine show type
     let type = 'show';
-    if (item.name.toLowerCase().includes('fireworks') || 
-        item.name.toLowerCase().includes('happily ever after')) {
-      type = 'fireworks';
+if (item.name.toLowerCase().includes('fireworks') || 
+    item.name.toLowerCase().includes('happily ever after') ||
+    item.name.toLowerCase().includes('disney starlight')) {
+  type = 'fireworks';
+
     } else if (item.name.toLowerCase().includes('parade')) {
       type = 'parade';
     } else if (item.name.toLowerCase().includes('meet') || 
