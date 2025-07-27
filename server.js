@@ -595,11 +595,16 @@ app.get('/api/disney/entertainment/:park?', validatePark, async (req, res) => {
       allEntertainment.push(...characterData.characters);
     }
     
-    // ENHANCED: Always add comprehensive fallback entertainment
-    const fallbackEntertainment = getFallbackEntertainment(park);
-    if (fallbackEntertainment?.entertainment) {
-      allEntertainment.push(...fallbackEntertainment.entertainment);
-    }
+    // Only add fallback if we don't have good live data
+if (!baseEntertainment?.entertainment || baseEntertainment.entertainment.length < 5) {
+  console.log(`⚠️ Adding fallback entertainment - live data insufficient - Request ID: ${req.id}`);
+  const fallbackEntertainment = getFallbackEntertainment(park);
+  if (fallbackEntertainment?.entertainment) {
+    allEntertainment.push(...fallbackEntertainment.entertainment);
+  }
+} else {
+  console.log(`✅ Using live entertainment data only - Request ID: ${req.id}`);
+}
     
     // Deduplicate entries
     const uniqueEntertainment = [...new Map(allEntertainment.map(item => 
