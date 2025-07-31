@@ -9,6 +9,7 @@ const cheerio = require('cheerio');
 const CircuitBreaker = require('opossum');
 const { v4: uuidv4 } = require('uuid');
 const admin = require('firebase-admin');
+const { Expo } = require('expo-server-sdk');
 require('dotenv').config();
 const app = express();
 
@@ -88,7 +89,12 @@ try {
 const userWatchlists = new Map();
 const userTokens = new Map();
 const notificationHistory = new Map();
+// ========== EXPO PUSH INITIALIZATION ==========
+const expo = new Expo();
 
+// In-memory storage for Expo push tokens (separate from Firebase)
+const expoUserTokens = new Map();
+const expoUserWatchlists = new Map();
 // ========== ENHANCED CACHING SYSTEM ==========
 const CACHE_TTL_PARK_HOURS = process.env.CACHE_TTL_PARK_HOURS || 3600; // 1 hour
 const CACHE_TTL_ENTERTAINMENT = process.env.CACHE_TTL_ENTERTAINMENT || 1800; // 30 minutes  
@@ -394,6 +400,377 @@ app.post('/api/notifications/test', async (req, res) => {
   }
 });
 
+// ========== EXPO PUSH NOTIFICATION ENDPOINTS ==========
+
+// Register device for Expo Push notifications
+app.post('/api/notifications/register-expo', (req, res) => {
+  const { expoPushToken, platform, userId, preferences = {} } = req.body;
+  
+  if (!expoPushToken) {
+    return res.status(400).json({
+      error: 'Expo push token is required',
+      referenceId: req.id
+    });
+  }
+
+  // Validate the Expo push token
+  if (!Expo.isExpoPushToken(expoPushToken)) {
+    return res.status(400).json({
+      error: 'Invalid Expo push token format',
+      referenceId: req.id
+    });
+  }
+  
+  const deviceUserId = userId || `disney_fan_${Date.now()}`;
+  
+  expoUserTokens.set(deviceUserId, {
+    expoPushToken,
+    platform: platform || 'unknown',
+    preferences: {
+      maxNotificationsPerDay: preferences.maxNotificationsPerDay || 6,
+      quietHours: preferences.quietHours || { 
+        enabled: true,
+        start: '22:00', 
+        end: '08:00' 
+      },
+      ...preferences
+    },
+    registeredAt: new Date(),
+    lastActive: new Date()
+  });
+  
+  console.log(`🎯 Registered Expo Push token for user ${deviceUserId} - Request ID: ${req.id}`);
+  console.log(`📱 Platform: ${platform}, Token: ${expoPushToken.substring(0, 30)}...`);
+  
+  res.json({ 
+    success: true, 
+    message: 'Device registered for Expo Push notifications',
+    userId: deviceUserId,
+    requestId: req.id
+  });
+});
+
+// Add ride to watchlist (Expo Push version)
+app.post('/api/notifications/add-ride-alert', (req, res) => {
+  const { expoPushToken, rideName, thresholdMinutes, parkId, alertType } = req.body;
+  
+  if (!expoPushToken || !rideName || !thresholdMinutes) {
+    return res.status(400).json({
+      error: 'expoPushToken, rideName, and thresholdMinutes are required',
+      referenceId: req.id
+    });
+  }
+
+  // Find user by token
+  let userId = null;
+  for (const [id, userData] of expoUserTokens.entries()) {
+    if (userData.expoPushToken === expoPushToken) {
+      userId = id;
+      break;
+    }
+  }
+
+  if (!userId) {
+    return res.status(404).json({
+      error: 'Device not registered. Please register first.',
+      referenceId: req.id
+    });
+  }
+  
+  if (!expoUserWatchlists.has(userId)) {
+    expoUserWatchlists.set(userId, []);
+  }
+  
+  const watchlist = expoUserWatchlists.get(userId);
+  const filteredWatchlist = watchlist.filter(item => item.rideName !== rideName);
+  
+  const newWatchItem = {
+    rideName,
+    thresholdMinutes: parseInt(thresholdMinutes),
+    parkId: parkId || 'magic-kingdom',
+    alertType: alertType || 'wait_time_drop',
+    addedAt: new Date(),
+    lastNotified: null,
+    notificationCount: 0
+  };
+  
+  filteredWatchlist.push(newWatchItem);
+  expoUserWatchlists.set(userId, filteredWatchlist);
+  
+  console.log(`🎢 Added ${rideName} (${thresholdMinutes} min) to watchlist for ${userId} - Request ID: ${req.id}`);
+  
+  res.json({ 
+    success: true, 
+    message: `Server will monitor ${rideName} and notify when it drops below ${thresholdMinutes} minutes`,
+    watchItem: newWatchItem,
+    totalWatching: filteredWatchlist.length,
+    requestId: req.id
+  });
+});
+
+// Remove ride from watchlist (Expo Push version)
+app.post('/api/notifications/remove-ride-alert', (req, res) => {
+  const { expoPushToken, rideName } = req.body;
+  
+  if (!expoPushToken || !rideName) {
+    return res.status(400).json({
+      error: 'expoPushToken and rideName are required',
+      referenceId: req.id
+    });
+  }
+
+  // Find user by token
+  let userId = null;
+  for (const [id, userData] of expoUserTokens.entries()) {
+    if (userData.expoPushToken === expoPushToken) {
+      userId = id;
+      break;
+    }
+  }
+
+  if (!userId) {
+    return res.status(404).json({
+      error: 'Device not registered',
+      referenceId: req.id
+    });
+  }
+  
+  const watchlist = expoUserWatchlists.get(userId) || [];
+  const filteredWatchlist = watchlist.filter(item => item.rideName !== rideName);
+  expoUserWatchlists.set(userId, filteredWatchlist);
+  
+  console.log(`🗑️ Removed ${rideName} from watchlist for ${userId} - Request ID: ${req.id}`);
+  
+  res.json({ 
+    success: true, 
+    message: `${rideName} removed from watchlist`,
+    totalWatching: filteredWatchlist.length,
+    requestId: req.id
+  });
+});
+
+// Get user's watchlist (Expo Push version)
+app.get('/api/notifications/get-watchlist', (req, res) => {
+  const { token } = req.query;
+  
+  if (!token) {
+    return res.status(400).json({
+      error: 'token parameter is required',
+      referenceId: req.id
+    });
+  }
+
+  // Find user by token
+  let userId = null;
+  for (const [id, userData] of expoUserTokens.entries()) {
+    if (userData.expoPushToken === token) {
+      userId = id;
+      break;
+    }
+  }
+
+  if (!userId) {
+    return res.status(404).json({
+      error: 'Device not registered',
+      referenceId: req.id
+    });
+  }
+  
+  const watchlist = expoUserWatchlists.get(userId) || [];
+  
+  res.json({ 
+    userId,
+    watchlist,
+    totalWatching: watchlist.length,
+    requestId: req.id
+  });
+});
+
+// Test Expo Push notification
+app.post('/api/notifications/test-push', async (req, res) => {
+  const { expoPushToken, testMessage } = req.body;
+  
+  if (!expoPushToken) {
+    return res.status(400).json({
+      error: 'expoPushToken is required',
+      referenceId: req.id
+    });
+  }
+
+  // Validate the Expo push token
+  if (!Expo.isExpoPushToken(expoPushToken)) {
+    return res.status(400).json({
+      error: 'Invalid Expo push token format',
+      referenceId: req.id
+    });
+  }
+  
+  try {
+    const message = {
+      to: expoPushToken,
+      sound: 'default',
+      title: '🧚‍♀️ Pixie Pal Test',
+      body: testMessage || 'Background notifications are working! 🎢✨',
+      data: { 
+        type: 'test',
+        timestamp: new Date().toISOString(),
+        source: 'disney_server'
+      }
+    };
+
+    console.log(`🧪 Sending test notification to ${expoPushToken.substring(0, 30)}... - Request ID: ${req.id}`);
+    
+    const ticket = await expo.sendPushNotificationsAsync([message]);
+    console.log(`✅ Test notification sent successfully - Request ID: ${req.id}`);
+    console.log(`📊 Ticket:`, ticket[0]);
+    
+    res.json({ 
+      success: true, 
+      message: 'Test push notification sent!',
+      ticket: ticket[0],
+      requestId: req.id
+    });
+    
+  } catch (error) {
+    console.error(`❌ Test notification failed: ${error.message} - Request ID: ${req.id}`);
+    res.status(500).json({
+      error: 'Failed to send test notification',
+      details: error.message,
+      referenceId: req.id
+    });
+  }
+});
+
+// ========== BACKGROUND MONITORING SYSTEM ==========
+// This function will periodically check wait times and send notifications
+
+async function checkWaitTimesAndNotify() {
+  console.log('🔍 Checking wait times for notifications...');
+  
+  try {
+    // Get all users with active watchlists
+    for (const [userId, watchlist] of expoUserWatchlists.entries()) {
+      if (!watchlist || watchlist.length === 0) continue;
+      
+      const userData = expoUserTokens.get(userId);
+      if (!userData) continue;
+      
+      console.log(`👀 Checking ${watchlist.length} alerts for user ${userId}`);
+      
+      // Check each ride in the watchlist
+      for (const watchItem of watchlist) {
+        await checkSingleRideAlert(userId, userData, watchItem);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error in wait time monitoring:', error);
+  }
+}
+
+async function checkSingleRideAlert(userId, userData, watchItem) {
+  try {
+    const { rideName, thresholdMinutes, parkId } = watchItem;
+    
+    // Get current wait times for the park
+    const waitTimesData = await waitTimesBreaker.fire(parkId, 'monitoring');
+    
+    if (!waitTimesData || !waitTimesData.attractions) {
+      console.log(`⚠️ No wait times data for ${parkId}`);
+      return;
+    }
+    
+    // Find the specific ride
+    const ride = waitTimesData.attractions.find(attraction => 
+      attraction.name.toLowerCase().includes(rideName.toLowerCase()) ||
+      rideName.toLowerCase().includes(attraction.name.toLowerCase())
+    );
+    
+    if (!ride) {
+      console.log(`⚠️ Could not find ride: ${rideName} in ${parkId}`);
+      return;
+    }
+    
+    console.log(`🎢 ${rideName}: ${ride.waitTime} min (threshold: ${thresholdMinutes} min)`);
+    
+    // Check if condition is met
+    if (ride.waitTime <= thresholdMinutes && ride.isOpen) {
+      
+      // Check if we already sent this alert recently (anti-spam)
+      const now = new Date();
+      const lastNotified = watchItem.lastNotified ? new Date(watchItem.lastNotified) : null;
+      const timeSinceLastAlert = lastNotified ? (now - lastNotified) / (1000 * 60) : Infinity; // minutes
+      
+      if (timeSinceLastAlert < 30) { // Don't spam - wait 30 minutes between alerts for same ride
+        console.log(`⏭️ Already sent alert for ${rideName} recently (${Math.round(timeSinceLastAlert)} min ago)`);
+        return;
+      }
+      
+      console.log(`🚨 ALERT TRIGGERED: ${rideName} is ${ride.waitTime} minutes!`);
+      
+      // Send the notification!
+      await sendRideAlert(userData.expoPushToken, watchItem, ride);
+      
+      // Update last notified time
+      watchItem.lastNotified = now.toISOString();
+      watchItem.notificationCount = (watchItem.notificationCount || 0) + 1;
+    }
+    
+  } catch (error) {
+    console.error(`❌ Error checking alert for ${watchItem.rideName}:`, error);
+  }
+}
+
+async function sendRideAlert(expoPushToken, watchItem, ride) {
+  try {
+    const message = {
+      to: expoPushToken,
+      sound: 'default',
+      title: `🎢 ${watchItem.rideName} Alert!`,
+      body: `${watchItem.rideName} is now ${ride.waitTime} minutes! (Target: ${watchItem.thresholdMinutes} min)`,
+      data: { 
+        type: 'ride_alert',
+        rideName: watchItem.rideName,
+        currentWaitTime: ride.waitTime,
+        thresholdTime: watchItem.thresholdMinutes,
+        parkId: watchItem.parkId,
+        timestamp: new Date().toISOString()
+      }
+    };
+
+    console.log(`🔔 Sending ride alert: ${watchItem.rideName} is ${ride.waitTime} minutes!`);
+    
+    const ticket = await expo.sendPushNotificationsAsync([message]);
+    console.log(`✅ Ride alert sent successfully`);
+    
+    return ticket[0];
+    
+  } catch (error) {
+    console.error('❌ Failed to send ride alert:', error);
+    throw error;
+  }
+}
+
+// ========== START MONITORING ==========
+// Check wait times every 5 minutes
+const MONITORING_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+setInterval(checkWaitTimesAndNotify, MONITORING_INTERVAL);
+
+console.log(`🚀 Wait time monitoring started - checking every ${MONITORING_INTERVAL / 60000} minutes`);
+
+// ========== EXPO PUSH STATUS ENDPOINT ==========
+app.get('/api/notifications/expo-status', (req, res) => {
+  res.json({
+    expoSDK: 'active',
+    registeredDevices: expoUserTokens.size,
+    activeWatchlists: expoUserWatchlists.size,
+    totalWatchedRides: Array.from(expoUserWatchlists.values()).reduce((total, list) => total + list.length, 0),
+    monitoringInterval: `${MONITORING_INTERVAL / 60000} minutes`,
+    lastCheck: new Date().toISOString(),
+    requestId: req.id
+  });
+});
+
 // ========== ENDPOINTS ==========
 
 // Welcome endpoint with system status
@@ -413,16 +790,22 @@ app.get('/', (req, res) => {
       'Production-grade error handling'
     ],
     endpoints: [
-      'GET /api/disney/park-hours/:park',
-      'GET /api/disney/entertainment/:park', 
-      'GET /api/disney/wait-times/:park',
-      'GET /api/disney/character-meets/:park',
-      'GET /health',
-      'GET /debug/themeparkiq',
-      'GET /debug/static-characters/:park',
-      'GET /api/cache/status',
-      'POST /api/cache/reset/:type'
-    ],
+  'GET /api/disney/park-hours/:park',
+  'GET /api/disney/entertainment/:park', 
+  'GET /api/disney/wait-times/:park',
+  'GET /api/disney/character-meets/:park',
+  'POST /api/notifications/register-expo',
+  'POST /api/notifications/test-push',
+  'POST /api/notifications/add-ride-alert',
+  'POST /api/notifications/remove-ride-alert',
+  'GET /api/notifications/get-watchlist',
+  'GET /api/notifications/expo-status',
+  'GET /health',
+  'GET /debug/themeparkiq',
+  'GET /debug/static-characters/:park',
+  'GET /api/cache/status',
+  'POST /api/cache/reset/:type'
+],
     lastUpdated: new Date().toISOString(),
     dataState: {
       lastSuccessfulFetch: dataState.lastSuccessfulFetch,

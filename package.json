@@ -22,6 +22,7 @@
     "cheerio": "^1.1.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
+    "expo-server-sdk": "^3.15.0",
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "firebase-admin": "^13.4.0",
